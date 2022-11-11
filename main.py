@@ -131,6 +131,9 @@ def build_benchbase():
     ], cwd=BENCHBASE_SRC_PATH).wait()
     if ret != 0:
         raise Exception(f'Got return code {ret} when compiling benchbase')
+
+
+def install_benchbase():
     shutil.unpack_archive(BENCHBASE_SRC_PATH / 'target' / 'benchbase-postgres.tgz', BENCHBASE_INSTALL_PATH, 'gztar')
 
 
@@ -143,17 +146,9 @@ def run_benchbase(config_file):
 
 if __name__ == '__main__':
     # (pg_repo, pbm_repos, bbase_repo) = clone_repos()
-    # (pg_repo, pbm_repos, bbase_repo) = get_repos()
-    #
-    # print(pg_repo)
-    # print(pbm_repos)
-    # print(bbase_repo)
-
-    # POSTGRES_BASE_BUILD_PATH.mkdir(exist_ok=True)
-    # p = subprocess.Popen('pwd', cwd=POSTGRES_BASE_BUILD_PATH)
 
     # config_postgres()
     # build_postgres()
 
-    build_benchbase()
-
+    # build_benchbase()
+    install_benchbase()

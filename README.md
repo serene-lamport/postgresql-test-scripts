@@ -1,6 +1,13 @@
 PostgreSQL test scripts
 =======================
 
+Prerequisites
+-------------
+
+- Python 3 >= 3.7
+- java jdk 17 to compile benchbase
+- prerequisites to build PostgreSQL
+
 Python virtual environment
 --------------------------
 
