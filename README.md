@@ -5,7 +5,7 @@ Prerequisites
 -------------
 
 - Python 3 >= 3.7
-- java jdk 17 to compile benchbase
+- java jdk 17 (or newer) to compile & run benchbase `sudo apt install opensdk-17-jdk`
 - prerequisites to build PostgreSQL
 
 Python virtual environment
