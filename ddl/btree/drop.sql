@@ -1,5 +1,5 @@
 /*
- * Drop B-Tree indices and constraints created by btrees-create.sql
+ * Drop B-Tree indices and constraints created by btrees/create.sql
  */
 
 -- REGION indices
