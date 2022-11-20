@@ -417,7 +417,28 @@ def one_time_pg_setup():
     for brnch in POSTGRES_ALL_BRANCHES.keys():
         for blk_sz in PG_BLK_SIZES:
             config_postgres_repo(brnch, blk_sz)
-            build_benchbase(brnch, blk_sz)
+            build_postgres(brnch, blk_sz)
+
+
+def refresh_pg_installs():
+    """Update all git worktrees and rebuild postgress for each configuration.
+    Run on the server host.
+    """
+
+    # Update each git repo from the remote
+    (pg_main_repo, pg_pbm_repos, _) = get_repos()
+
+    with GitProgressBar(f'PostgreSQL {pg_main_repo.active_branch}') as pbar:
+        pg_main_repo.remote().pull(progress=pbar)
+
+    for r in pg_pbm_repos:
+        with GitProgressBar(f'PostreSQL {r.active_branch}') as pbar:
+            r.remote().pull(progress=pbar)
+
+    # Re-compile and re-install postgres for each configuration
+    for brnch in POSTGRES_ALL_BRANCHES.keys():
+        for blk_sz in PG_BLK_SIZES:
+            build_postgres(brnch, blk_sz)
 
 
 def one_time_benchbase_setup():
@@ -432,12 +453,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('action', choices=[
         'pg_setup',
+        'pg_update',
         'benchbase_setup',
         'gen_test_data',
         'bench',
         'testing'
     ], help="""Action to perform. Actions are:
     pg_setup:           clone and install postgres for each test configuration
+    pg_update:          update git repo and rebuild postgres for each test configuration
     benchbase_setup:    install benchbase on current host
     gen_test_data:      load test data for the given scale factor for all test configurations
     bench:              run benchmarks using the specified scale factor and index type
@@ -451,6 +474,9 @@ if __name__ == '__main__':
 
     if args.action == 'pg_setup':
         one_time_pg_setup()
+
+    if args.action == 'pg_update':
+        refresh_pg_installs()
 
     elif args.action == 'benchbase_setup':
         one_time_benchbase_setup()
