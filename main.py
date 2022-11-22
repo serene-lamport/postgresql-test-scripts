@@ -32,7 +32,7 @@ PG_PASSWD: str = ''
 PG_DATA_ROOT = Path('/hdd1/pgdata')
 
 # Where to clone/compile everything (absolute path)
-ROOT_DIR = Path('/home/ta3vande/PG_TESTS')
+BUILD_ROOT = Path('/home/ta3vande/PG_TESTS')
 
 
 ##############################
@@ -41,6 +41,7 @@ ROOT_DIR = Path('/home/ta3vande/PG_TESTS')
 
 # Postgres block size (KiB)
 PG_BLK_SIZES = [8, 32]
+# PG_BLK_SIZES = [8]  # for testing this script itself
 
 
 #################################
@@ -49,6 +50,7 @@ PG_BLK_SIZES = [8, 32]
 
 # Postgres git info: repository and branch names
 POSTGRES_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/postgresql-masters-work.git'
+# POSTGRES_GIT_URL = 'https://git.uwaterloo.ca/ta3vande/postgresql-masters-work.git'
 POSTGRES_BASE_BRANCH = 'REL_14_STABLE'
 POSTGRES_PBM_BRANCHES = {
     # key = friendly name in folder paths
@@ -57,17 +59,17 @@ POSTGRES_PBM_BRANCHES = {
 }
 
 # Derived configuration: paths and branch mappings
-POSTGRES_SRC_PATH = ROOT_DIR / 'pg_src'
-POSTGRES_BUILD_PATH = ROOT_DIR / 'pg_build'
-POSTGRES_INSTALL_PATH = ROOT_DIR / 'pg_install'
+POSTGRES_SRC_PATH = BUILD_ROOT / 'pg_src'
+POSTGRES_BUILD_PATH = BUILD_ROOT / 'pg_build'
+POSTGRES_INSTALL_PATH = BUILD_ROOT / 'pg_install'
 POSTGRES_SRC_PATH_BASE = POSTGRES_SRC_PATH / 'base'
 POSTGRES_ALL_BRANCHES = POSTGRES_PBM_BRANCHES.copy()
 POSTGRES_ALL_BRANCHES['base'] = POSTGRES_BASE_BRANCH
 
 # Benchbase
 BENCHBASE_GIT_URL = 'https://github.com/cmu-db/benchbase.git'
-BENCHBASE_SRC_PATH = ROOT_DIR / 'benchbase_src'
-BENCHBASE_INSTALL_PATH = ROOT_DIR / 'benchbase_install'
+BENCHBASE_SRC_PATH = BUILD_ROOT / 'benchbase_src'
+BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
 
 
 ##########
@@ -193,6 +195,15 @@ def build_postgres(brnch: str, blk_sz: int):
         raise Exception(f'Got return code {ret} when installing postgres {brnch} with block size={blk_sz}')
 
 
+def clean_postgres(brnch: str, blk_sz: int):
+    """Clean PostgreSQL build for the specified branch/block size."""
+    build_path = get_build_path(brnch, blk_sz)
+    print(f'Cleaning postgres {brnch} with block size {blk_sz}')
+    ret = subprocess.Popen(['make', 'clean'], cwd=build_path).wait()
+    if ret != 0:
+        raise Exception(f'Got return code {ret} when cleaning postgres {brnch} with block size={blk_sz}')
+
+
 def build_benchbase():
     """Compile BenchBase."""
     ret = subprocess.Popen([
@@ -310,6 +321,7 @@ def run_bbase_load(config):
         '-b', 'tpch',
         '-c', str(config),
         '--load=true',
+        # TODO arg for setting results directory!
     ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
 
 
@@ -317,7 +329,7 @@ def run_bbase_test(case: DbConfig, bb_config: TestDriverConfig):
     """Run benchbase (on local machine) against PostgreSQL on the remote host.
     Will start & stop PostgreSQL on the remote host.
     """
-    temp_bbase_config = ROOT_DIR / 'bbase_tpch_config.xml'
+    temp_bbase_config = BUILD_ROOT / 'bbase_tpch_config.xml'
 
     create_bbase_config(case.sf, bb_config, temp_bbase_config)
 
@@ -373,8 +385,9 @@ def create_and_populate_local_db(case: DbConfig):
             conn.execute('ALTER TABLE orders SET UNLOGGED;')
 
         print(f'BenchBase: loading test data...')
-        create_bbase_config(case.sf, TestDriverConfig(nworkers=1), ROOT_DIR / 'load_config.xml')
-        run_bbase_load(ROOT_DIR / 'load_config.xml')
+        bbase_config_file = BUILD_ROOT / 'load_config.xml'
+        create_bbase_config(case.sf, TestDriverConfig(nworkers=1), bbase_config_file)
+        run_bbase_load(bbase_config_file)
 
         # Re-enable vacuum after loading is complete
         with pg.open(conn_str) as conn:
@@ -395,14 +408,18 @@ def create_and_populate_local_db(case: DbConfig):
         pg_stop_db(cl)
 
 
-def create_indexes(sf: int, index_dir: str):
-    conn = pg.open(f'pq://{PG_HOST}/TPCH_{sf}')
-    pg_exec_file(conn, f'ddl/{index_dir}/create.sql')
+def create_indexes(conn: PgConnection, index_dir: str):
+    pg_exec_file(conn, f'ddl/index/{index_dir}/create.sql')
 
 
-def drop_indexes(sf: int, index_dir: str):
-    conn = pg.open(f'pq://{PG_HOST}/TPCH_{sf}')
-    pg_exec_file(conn, f'ddl/{index_dir}/drop.sql')
+def drop_indexes(conn: PgConnection, index_dir: str):
+    pg_exec_file(conn, f'ddl/index/{index_dir}/drop.sql')
+
+
+def cluster_tables(conn: PgConnection, cluster_script: str):
+    if cluster_script is None:
+        return
+    pg_exec_file(conn, f'ddl/cluster/{cluster_script}.sql')
 
 
 def one_time_pg_setup():
@@ -441,6 +458,20 @@ def refresh_pg_installs():
             build_postgres(brnch, blk_sz)
 
 
+def clean_pg_installs(base=False):
+    """Clean postgres installations. (only include the base branch if base=True)
+    Run on the server host.
+    """
+
+    for blk_sz in PG_BLK_SIZES:
+        if base:
+            clean_postgres('base', blk_sz)
+
+        for brnch in POSTGRES_PBM_BRANCHES.keys():
+            clean_postgres(brnch, blk_sz)
+
+
+
 def one_time_benchbase_setup():
     """Build and install BenchBase on current host."""
     print('Cloning BenchBase...')
@@ -449,34 +480,53 @@ def one_time_benchbase_setup():
     install_benchbase()
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument('action', choices=[
-        'pg_setup',
-        'pg_update',
-        'benchbase_setup',
-        'gen_test_data',
-        'bench',
-        'testing'
-    ], help="""Action to perform. Actions are:
+MAIN_HELP_TEXT = """Action to perform. Actions are:
     pg_setup:           clone and install postgres for each test configuration
     pg_update:          update git repo and rebuild postgres for each test configuration
+    pg_clean:           `make clean` for PBM installations
+    pg_clean+base:      `make clean` for PBM installations AND the default installation
     benchbase_setup:    install benchbase on current host
     gen_test_data:      load test data for the given scale factor for all test configurations
     bench:              run benchmarks using the specified scale factor and index type
 
     testing:            experiments, to be removed...
-    """)
+
+Note that `bench` runs against postgres installed on a different machine (PG_HOST) and should NOT be run on the postgres
+server (it will remotely configure and start/stop postgres as needed) while everything else is setup which runs locally.
+(i.e. should be run from the postgres host machine)
+"""
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+    parser.add_argument('action', choices=[
+        'pg_setup',
+        'pg_update',
+        'pg_clean',
+        'pg_clean+base',
+        'benchbase_setup',
+        'gen_test_data',
+        'bench',
+        'testing'
+    ], help=MAIN_HELP_TEXT)
     parser.add_argument('-sf', '--scale-factor', type=int, default=None, dest='sf')
     parser.add_argument('-i', '--index-type', type=str, default=None, dest='index_type', metavar='INDEX',
-                        help='Folder name under `ddl/` with `create.sql` and `drop.sql` to create and drop the indices.')
+                        help='Folder name under `ddl/index/` with `create.sql` and `drop.sql` to create and drop the indexes. (e.g. btree)')
+    parser.add_argument('-c', '--cluster', type=str, default=None, dest='cluster',
+                        help='Script name to cluster tables after indices are created under `ddl/cluster/`. (e.g. pkey)')
     args = parser.parse_args()
 
     if args.action == 'pg_setup':
         one_time_pg_setup()
 
-    if args.action == 'pg_update':
+    elif args.action == 'pg_update':
         refresh_pg_installs()
+
+    elif args.action == 'pg_clean':
+        clean_pg_installs(base=False)
+
+    elif args.action == 'pg_clean+base':
+        clean_pg_installs(base=True)
 
     elif args.action == 'benchbase_setup':
         one_time_benchbase_setup()
@@ -501,16 +551,34 @@ if __name__ == '__main__':
         if args.index_type is None:
             raise Exception(f'Must specify index type!')
 
+        # remember how we clustered last
+        if args.cluster is not None:
+            with open('last_cluster.txt', 'w') as f:
+                f.write(args.cluster)
+
         print(f'Running experiments with scale factor {args.sf} and index definitions under ddl/{args.index_type}/')
         for blk_sz in PG_BLK_SIZES:
 
             # Create indexes once for the block size before the tests with different branches
-            print(f'~~~~~~~~~~ Creating indices from ddl/{args.index_type}/, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
-            with FabConnection(PG_HOST) as conn:
+            print(f'~~~~~~~~~~ Creating indices from ddl/index/{args.index_type}/, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
+            with FabConnection(PG_HOST) as fabconn:
                 dbconf = DbConfig('base', blk_sz=blk_sz, sf=args.sf)
-                start_remote_postgres(conn, dbconf)
-                create_indexes(args.sf, args.index_type)
-                stop_remote_postgres(conn, dbconf)
+                start_remote_postgres(fabconn, dbconf)
+                try:
+                    with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
+                        # Dropping indexes first is in case of an error while create creating indexes or clustering.
+                        # An error here will mean the indexes don't get dropped automatically, but retrying can fix it.
+                        print('dropping indexes first if they exist...')
+                        drop_indexes(pgconn, args.index_type)
+
+                        print(f'create indexes: {args.index_type}')
+                        create_indexes(pgconn, args.index_type)
+
+                        print(f'cluster tables: {args.cluster}')
+                        cluster_tables(pgconn, args.cluster)
+
+                finally:
+                    stop_remote_postgres(fabconn, dbconf)
 
             # Actually run the tests
             try:
@@ -522,39 +590,29 @@ if __name__ == '__main__':
                     dbconf = DbConfig(brnch, blk_sz, sf=args.sf)
 
                     # TODO run experiment!
+                    # TODO -d arg to benchbase tells it where to send results
 
                     print('NOOP experiments!')
-                    with FabConnection(PG_HOST) as conn:
-                        start_remote_postgres(conn, dbconf)
+                    with FabConnection(PG_HOST) as fabconn:
+                        start_remote_postgres(fabconn, dbconf)
                         try:
                             input('Press enter to continue: ')
                         finally:
-                            stop_remote_postgres(conn, dbconf)
+                            stop_remote_postgres(fabconn, dbconf)
 
             finally:
                 # Teardown indexes again at the end
                 print(f'~~~~~~~~~~ Dropping indices from ddl/{args.index_type}/, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
-                with FabConnection(PG_HOST) as conn:
+                with FabConnection(PG_HOST) as fabconn:
                     dbconf = DbConfig('base', blk_sz=blk_sz, sf=args.sf)
-                    start_remote_postgres(conn, dbconf)
-                    drop_indexes(args.sf, args.index_type)
-                    stop_remote_postgres(conn, dbconf)
+                    start_remote_postgres(fabconn, dbconf)
+                    with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
+                        drop_indexes(pgconn, args.index_type)
+                    stop_remote_postgres(fabconn, dbconf)
 
-
-
-
+    # TODO remove the 'testing' option
     elif args.action == 'testing':
-        sf = 1
-        case = DbConfig(brnch='base', blk_sz=8, sf=sf)
-        #
-        #
-        # with FabConnection(PG_HOST) as conn:
-        #     start_remote_postgres(conn, case)
-        #     drop_btree_indexes(case)
-        #     create_btree_indexes(case)
-        #     stop_remote_postgres(conn, case)
-        #
-        # run_bbase_test(case, TestDriverConfig(nworkers=5))
+        pass
 
     else:
         raise Exception(f'Unknown action {args.action}')
@@ -564,32 +622,12 @@ if __name__ == '__main__':
 
 
 # TODO: ...
-
-# Setup on PG server:
-# - [x] clone PG and create worktrees
-# - [x] `configure` and `make`, `make install` for each worktree/branch AND eack block size!
-#    - [x] also set the actual configuration
-# - [x] for each block size (but not branch!), create a DB cluster and database
-
-# Setup on benchbase server:
-# - [x] clone, compile, and decompress benchbase (or just decompress, if using pre-built)
-
-# Loading data:
-# - [x] need to start postgres. Need to make sure we get the right one!
-# - [ ] can run benchbase from any server to load the data: generate config file for desired scale factor and "--load=true"
-# - [ ] stop postgres again!
-
-# Running tests:
-# - ideally: run only on the benchbase node...
-# - [x] configure postgres (remotely! might be tricky...)
-# - [ ] generate configuration for benchbase (don't assume we already have it)
-# - [ ] ...
-
-
-
-# ALSO NEED TO DO!
 # - [ ] decide what indices to use, how to cluster tables
 # - [ ] decide what workloads to test
 # - [ ] microbenchmarks?
 # - [ ] sort out indices!
+# - [ ] how to configure the PBM? Only use separate branches, or modify preprocessor variables?
 # - [ ] ...
+
+# MAYBE: ...
+# - [ ] make generating data allowed from remote host so benchbase is ony needed on one machine
