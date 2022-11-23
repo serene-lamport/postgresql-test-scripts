@@ -3,6 +3,9 @@
  */
 
 CLUSTER orders using o_od;
+ANALYZE orders;
+
 CREATE INDEX l_maxdate ON lineitem (greatest(l_receiptdate, l_commitdate));
 CLUSTER lineitem using l_maxdate;
 DROP INDEX l_maxdate;
+ANALYZE lineitem;
