@@ -7,5 +7,5 @@ TODO
 - [ ] clustering:
     - [x] allow specifying how to cluster
     - [ ] revisit: is it better to simply cluster every time?
-- [ ] database configuration files!
-- [ ] benchbase configuration files!
+- [x] database configuration files!
+- [x] benchbase configuration files!

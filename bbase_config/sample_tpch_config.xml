@@ -19,7 +19,7 @@
     <works>
         <work>
             <!-- TODO what are these fields? -->
-            <serial>true</serial>
+            <serial>false</serial>
             <rate>unlimited</rate>
             <weights>1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1</weights>
         </work>

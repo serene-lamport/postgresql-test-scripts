@@ -3,6 +3,8 @@ import os
 import git
 import shutil
 import subprocess
+from datetime import datetime as dt
+from json.encoder import JSONEncoder
 from pathlib import Path
 import postgresql as pg
 import postgresql.api
@@ -71,6 +73,12 @@ BENCHBASE_GIT_URL = 'https://github.com/cmu-db/benchbase.git'
 BENCHBASE_SRC_PATH = BUILD_ROOT / 'benchbase_src'
 BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
 
+# Results
+RESULTS_ROOT = BUILD_ROOT / 'results'
+
+# Data to remember between runs. These are NOT absolute paths, they are relative to the git repo.
+LAST_CLUSTER_FILE = 'last_cluster.txt'
+
 
 ##########
 #  CODE  #
@@ -81,7 +89,7 @@ BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
 # Information about the database is configured: branch/code being used, block size, and scale factor
 DbConfig = namedtuple('DbConfig', ['brnch', 'blk_sz', 'sf'])
 # Information about how the test is configured: parallelism, etc... TODO what else?
-TestDriverConfig = namedtuple('TestDriverConfig', ['nworkers'])
+TestDriverConfig = namedtuple('TestDriverConfig', ['nworkers', 'results_dir'])
 
 # TODO other config parameters
 
@@ -310,6 +318,20 @@ def create_bbase_config(sf, bb_config: TestDriverConfig, out):
     params.find('scalefactor').text = str(sf)
     params.find('terminals').text = str(bb_config.nworkers)
 
+    works = params.find('works')
+
+    # Specify the workload
+    for elem in works:
+        works.remove(elem)
+
+    work = ET.SubElement(works, 'work')
+    ET.SubElement(work, 'serial').text = 'false'
+    ET.SubElement(work, 'rate').text = 'unlimited'  # Rate is in queries per second (?)
+    ET.SubElement(work, 'weights').text = '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1'
+    ET.SubElement(work, 'arrival').text = 'regular'
+    ET.SubElement(work, 'time').text = '300'  # Time to run the benchmark in seconds (?)
+    # ET.SubElement(work, 'warmup').text = '0'
+
     tree.write(out)
 
 
@@ -321,7 +343,6 @@ def run_bbase_load(config):
         '-b', 'tpch',
         '-c', str(config),
         '--load=true',
-        # TODO arg for setting results directory!
     ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
 
 
@@ -344,6 +365,7 @@ def run_bbase_test(case: DbConfig, bb_config: TestDriverConfig):
             '-b', 'tpch',
             '-c', str(temp_bbase_config),
             '--execute=true',
+            '-d', str(bb_config.results_dir),
         ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
     finally:
         with FabConnection(PG_HOST) as conn:
@@ -470,14 +492,170 @@ def clean_pg_installs(base=False):
         for brnch in POSTGRES_PBM_BRANCHES.keys():
             clean_postgres(brnch, blk_sz)
 
-
-
 def one_time_benchbase_setup():
     """Build and install BenchBase on current host."""
     print('Cloning BenchBase...')
     clone_benchbase_repo()
     build_benchbase()
     install_benchbase()
+
+
+def gen_test_data(sf: int):
+    if sf is None:
+        raise Exception(f'Must specify scale factor when loading data!')
+
+        # Generate test data for all block sizes (only base branch is needed for generating data)
+        print(f'Initializing test data with scale factor {sf}')
+    for blk_sz in PG_BLK_SIZES:
+        print('--------------------------------------------------------------------------------')
+        print(f'---- Initializing data for blk_sz={blk_sz}, sf={sf}')
+        print('--------------------------------------------------------------------------------')
+        dbconf = DbConfig('base', blk_sz, sf)
+        create_and_populate_local_db(dbconf)
+
+
+def clean_indexes(args):
+    """Cleanup indexes from a failed test run by running the drop script for the specified set of indexes.
+    Optionally, also recluster the database by the indexes given.
+    """
+    if args.sf is None:
+        raise Exception(f'Must specify scale factor of databases to clean up!')
+
+    if args.index_type is None:
+        raise Exception(f'Must specify index type!')
+
+    # remember how we clustered last
+    if args.cluster is not None:
+        with open('last_cluster.txt', 'w') as f:
+            f.write(args.cluster)
+
+    for blk_sz in PG_BLK_SIZES:
+        print(f'~~~~~~~~~~ Cleaning up indexes from ddl/index/{args.index_type}/ and clustering {args.cluster}, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
+        dbconf = DbConfig('base', blk_sz, args.sf)
+        with FabConnection(PG_HOST) as fabconn:
+            start_remote_postgres(fabconn, dbconf)
+
+            with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
+                try:
+                    # First drop the indexes
+                    print(f'dropping indexes {args.index_type}...')
+                    drop_indexes(pgconn, args.index_type)
+
+                    # If asked to cluster: create the indexes temporarily to cluster
+                    if args.cluster is not None:
+                        print(f'Creating indexes {args.index_type} to cluster by {args.cluster}...')
+                        create_indexes(pgconn, args.index_type)
+                        cluster_tables(pgconn, args.cluster)
+                        drop_indexes(pgconn, args.index_type)
+
+                finally:
+                    if args.cluster is not None:
+                        print('Error: clustering failed, may need to run again to cleanup indexes.')
+                    stop_remote_postgres(fabconn, dbconf)
+
+
+def run_benchmarks(args):
+    if args.sf is None:
+        raise Exception(f'Must specify scale factor!')
+
+    if args.index_type is None:
+        raise Exception(f'Must specify index type!')
+
+    # remember how we clustered last
+    if args.cluster is not None:
+        with open(LAST_CLUSTER_FILE, 'w') as f:
+            f.write(args.cluster)
+
+    # create test dir
+    ts = dt.now()
+    ts_str = ts.strftime('%Y-%m-%d_%H-%M')
+    results_dir = RESULTS_ROOT / f'TPCH_{ts_str}'
+    os.mkdir(results_dir)
+
+    # store script config in test dir
+    try:
+        with open(LAST_CLUSTER_FILE, 'r') as f:
+            last_cluster = f.readline()
+    except FileNotFoundError:
+        last_cluster = None
+    with open(results_dir / 'test_config.json', 'w') as f:
+        config = {
+            'clustering': last_cluster,
+            'indexes': args.index_type,
+            'scalefactor': args.sf,
+        }
+        f.write(JSONEncoder(indent=2).encode(config))
+        f.write('\n')  # ensure trailing newline
+
+    print(f'Running experiments with scale factor {args.sf} and index definitions under ddl/index/{args.index_type}/, clustering with {args.cluster}')
+    for blk_sz in PG_BLK_SIZES:
+
+        # Create indexes once for the block size before the tests with different branches
+        print(f'~~~~~~~~~~ Creating indexes from ddl/index/{args.index_type}/, blk_sz={blk_sz}, sf={args.sf}, cluster={args.cluster} ~~~~~~~~~~')
+        with FabConnection(PG_HOST) as fabconn:
+            dbconf = DbConfig('base', blk_sz=blk_sz, sf=args.sf)
+            start_remote_postgres(fabconn, dbconf)
+            try:
+                with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
+                    # Dropping indexes first is in case of an error while create creating indexes or clustering.
+                    # An error here will mean the indexes don't get dropped automatically, but retrying can fix it.
+                    print('dropping indexes first if they exist...')
+                    drop_indexes(pgconn, args.index_type)
+
+                    print(f'create indexes: {args.index_type}')
+                    create_indexes(pgconn, args.index_type)
+
+                    print(f'cluster tables: {args.cluster}')
+                    cluster_tables(pgconn, args.cluster)
+
+            finally:
+                stop_remote_postgres(fabconn, dbconf)
+
+        # Actually run the tests
+        try:
+            for brnch in POSTGRES_ALL_BRANCHES.keys():
+                print('--------------------------------------------------------------------------------')
+                print(f'---- Running experiments for branch={brnch}, blk_sz={blk_sz}, sf={args.sf}')
+                print('--------------------------------------------------------------------------------')
+
+                dbconf = DbConfig(brnch, blk_sz, sf=args.sf)
+                results_subdir = results_dir / f'{brnch}_blksz{blk_sz}'
+
+                run_bbase_test(dbconf, TestDriverConfig(nworkers=8, results_dir=results_subdir))
+
+        finally:
+            # Teardown indexes again at the end
+            print(f'~~~~~~~~~~ Dropping indices from ddl/{args.index_type}/, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
+            with FabConnection(PG_HOST) as fabconn:
+                dbconf = DbConfig('base', blk_sz=blk_sz, sf=args.sf)
+                start_remote_postgres(fabconn, dbconf)
+                with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
+                    drop_indexes(pgconn, args.index_type)
+                stop_remote_postgres(fabconn, dbconf)
+
+
+
+
+
+def test_process_results(root: Path):
+    # os.listdir lists the file names in the directory, not the full path
+    pre = None
+    for f in os.listdir(root):
+        src = f
+        i = f.find('.') + 1
+        if pre is None:
+            pre = f[:i]
+
+        assert f[:i] == pre, 'result files didn\'t all have the same prefix!'
+        dst = f[i:]
+
+        print(f'{src =}, {i =}, {dst =}')
+
+        os.rename(root / src, root / dst)
+
+
+
+
 
 
 MAIN_HELP_TEXT = """Action to perform. Actions are:
@@ -487,6 +665,9 @@ MAIN_HELP_TEXT = """Action to perform. Actions are:
     pg_clean+base:      `make clean` for PBM installations AND the default installation
     benchbase_setup:    install benchbase on current host
     gen_test_data:      load test data for the given scale factor for all test configurations
+    clean_indexes:      used to remove indexes and re-cluster. If only --index-type is specified, will run the drop
+                        script for the index. With --index-type and --cluster: will create the indexes, cluster, then
+                        drop the index.
     bench:              run benchmarks using the specified scale factor and index type
 
     testing:            experiments, to be removed...
@@ -506,6 +687,7 @@ if __name__ == '__main__':
         'pg_clean+base',
         'benchbase_setup',
         'gen_test_data',
+        'clean_indexes',
         'bench',
         'testing'
     ], help=MAIN_HELP_TEXT)
@@ -532,90 +714,26 @@ if __name__ == '__main__':
         one_time_benchbase_setup()
 
     elif args.action == 'gen_test_data':
-        if args.sf is None:
-            raise Exception(f'Must specify scale factor when loading data!')
+        gen_test_data(args.sf)
 
-        # Generate test data for all block sizes (only base branch is needed for generating data)
-        print(f'Initializing test data with scale factor {args.sf}')
-        for blk_sz in PG_BLK_SIZES:
-            print('--------------------------------------------------------------------------------')
-            print(f'---- Initializing data for blk_sz={blk_sz}, sf={args.sf}')
-            print('--------------------------------------------------------------------------------')
-            case = DbConfig('base', blk_sz, args.sf)
-            create_and_populate_local_db(case)
+    elif args.action == 'clean_indexes':
+        clean_indexes(args)
 
     elif args.action == 'bench':
-        if args.sf is None:
-            raise Exception(f'Must specify scale factor!')
-
-        if args.index_type is None:
-            raise Exception(f'Must specify index type!')
-
-        # remember how we clustered last
-        if args.cluster is not None:
-            with open('last_cluster.txt', 'w') as f:
-                f.write(args.cluster)
-
-        print(f'Running experiments with scale factor {args.sf} and index definitions under ddl/{args.index_type}/')
-        for blk_sz in PG_BLK_SIZES:
-
-            # Create indexes once for the block size before the tests with different branches
-            print(f'~~~~~~~~~~ Creating indices from ddl/index/{args.index_type}/, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
-            with FabConnection(PG_HOST) as fabconn:
-                dbconf = DbConfig('base', blk_sz=blk_sz, sf=args.sf)
-                start_remote_postgres(fabconn, dbconf)
-                try:
-                    with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
-                        # Dropping indexes first is in case of an error while create creating indexes or clustering.
-                        # An error here will mean the indexes don't get dropped automatically, but retrying can fix it.
-                        print('dropping indexes first if they exist...')
-                        drop_indexes(pgconn, args.index_type)
-
-                        print(f'create indexes: {args.index_type}')
-                        create_indexes(pgconn, args.index_type)
-
-                        print(f'cluster tables: {args.cluster}')
-                        cluster_tables(pgconn, args.cluster)
-
-                finally:
-                    stop_remote_postgres(fabconn, dbconf)
-
-            # Actually run the tests
-            try:
-                for brnch in POSTGRES_ALL_BRANCHES.keys():
-                    print('--------------------------------------------------------------------------------')
-                    print(f'---- Running experiments for branch={brnch}, blk_sz={blk_sz}, sf={args.sf}')
-                    print('--------------------------------------------------------------------------------')
-
-                    dbconf = DbConfig(brnch, blk_sz, sf=args.sf)
-
-                    # TODO run experiment!
-                    # TODO -d arg to benchbase tells it where to send results
-
-                    print('NOOP experiments!')
-                    with FabConnection(PG_HOST) as fabconn:
-                        start_remote_postgres(fabconn, dbconf)
-                        try:
-                            input('Press enter to continue: ')
-                        finally:
-                            stop_remote_postgres(fabconn, dbconf)
-
-            finally:
-                # Teardown indexes again at the end
-                print(f'~~~~~~~~~~ Dropping indices from ddl/{args.index_type}/, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
-                with FabConnection(PG_HOST) as fabconn:
-                    dbconf = DbConfig('base', blk_sz=blk_sz, sf=args.sf)
-                    start_remote_postgres(fabconn, dbconf)
-                    with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
-                        drop_indexes(pgconn, args.index_type)
-                    stop_remote_postgres(fabconn, dbconf)
+        run_benchmarks(args)
 
     # TODO remove the 'testing' option
     elif args.action == 'testing':
         pass
 
+        test_process_results(RESULTS_ROOT / 'test_2')
+
+
+        # create_bbase_config(1, TestDriverConfig(23, 'testing/results'), 'TEST_CONFIG.xml')
+
     else:
         raise Exception(f'Unknown action {args.action}')
+
 
 
 
