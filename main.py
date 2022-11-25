@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
+import json
 import os
 import git
 import shutil
 import subprocess
 from datetime import datetime as dt
-from json.encoder import JSONEncoder
 from pathlib import Path
 import postgresql as pg
-import postgresql.api
 from postgresql.api import Connection as PgConnection
 from postgresql.installation import Installation, pg_config_dictionary
 from postgresql.cluster import Cluster
@@ -69,7 +68,8 @@ POSTGRES_ALL_BRANCHES = POSTGRES_PBM_BRANCHES.copy()
 POSTGRES_ALL_BRANCHES['base'] = POSTGRES_BASE_BRANCH
 
 # Benchbase
-BENCHBASE_GIT_URL = 'https://github.com/cmu-db/benchbase.git'
+BENCHBASE_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/benchbase.git'
+# BENCHBASE_GIT_URL = 'https://@git.uwaterloo.ca/ta3vande/benchbase.git'
 BENCHBASE_SRC_PATH = BUILD_ROOT / 'benchbase_src'
 BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
 
@@ -79,37 +79,33 @@ RESULTS_ROOT = BUILD_ROOT / 'results'
 # Data to remember between runs. These are NOT absolute paths, they are relative to the git repo.
 LAST_CLUSTER_FILE = 'last_cluster.txt'
 
+# Used to determine the 'pages per range' of BRIN indexes. We want to adjust this depending on the block size to have
+# the same number of *rows* per range. (approximately - blocks are padded slightly if not exactly a multiple of the row
+# size) This value is divided by the block size (in kB), so it should be a common multiple of all block sizes.
+BASE_PAGES_PER_RANGE = 128 * 8  # note: 128 is the default 'blocks_per_range' and 8 (kB) is default block size.
 
 ##########
 #  CODE  #
 ##########
 
-# TODO other config options: ammount of shared memory? index configuration?
+
+workload_weights = {
+    'tpch': '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0',
+    'micro': '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1',
+}
 
 # Information about the database is configured: branch/code being used, block size, and scale factor
+# These are used to decide which binaries to use (brnch, blk_sz) and which database clster to start (blk_sz, sf)
 DbConfig = namedtuple('DbConfig', ['brnch', 'blk_sz', 'sf'])
-# Information about how the test is configured: parallelism, etc... TODO what else?
-TestDriverConfig = namedtuple('TestDriverConfig', ['nworkers', 'results_dir'])
-
-# TODO other config parameters
-
-# Config parameters:
-# - Executable: brnch, blk_sz
-# - Data dir: blk_sz, sf
-#   - DbConfig = Executable, Data dir
-# - PG Config: (data dir), config_options={memory, ...}, index_type!
-# - BenchBase config: DB=(data dir), bbase_config={nworkers}
-# - Test config: PG config and BenchBase config
-
-# TestConfig = namedtuple('TestConfig', [
-#     'dbconfig',
-#     # posgresql.conf variables
-#     'shared_mem',
-#     # benchbase configuration
-#     'nworkers',
-# ])
+# Information about how to configure benchbase for the test
+BBaseConfig = namedtuple('BBaseConfig', ['nworkers', 'results_dir', 'workload'])
+# PostgreSQL configuration
 
 
+# PostgreSQL configuration for the test that isn't relevant for which binary to use (branch and block size) or which
+# database cluster (block size and scale factor). These get mapped directly to postgresql.conf so the field names
+# should match the config field.
+RuntimePgConfig = namedtuple('RuntimePgConfig', ['shared_buffers', 'synchronize_seqscans'])
 
 
 class GitProgressBar(git.RemoteProgress):
@@ -265,13 +261,13 @@ def pg_init_local_db(cl: Cluster):
     })
 
 
-def config_remote_postgres(conn: fabric.Connection, case: DbConfig):
+def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: RuntimePgConfig):
     """Configure a PostgreSQL installation from a different host (the benchmark client).
     This configures it with essentially no security at all; we assume the host is not accessible
     to the general internet. (in any case, there is nothing on the database except test data)
     """
     local_temp_path = 'temp_pg.conf'
-    remote_path = str(get_data_path(blk_sz=case.blk_sz, tpch_sf=case.sf) / 'postgresql.conf')
+    remote_path = str(get_data_path(blk_sz=dbconf.blk_sz, tpch_sf=dbconf.sf) / 'postgresql.conf')
 
     print(f'Configuring PostgreSQL on remote host, config file at: {remote_path}')
 
@@ -281,7 +277,7 @@ def config_remote_postgres(conn: fabric.Connection, case: DbConfig):
     cf.update({
         'listen_addresses': '*',
         'port': PG_PORT,
-        'shared_buffers': '8GB',  # TODO how much shared memory? make this a configuration parameter?
+        **pgconf._asdict()
     })
 
     conn.put(local_temp_path, remote_path)
@@ -308,11 +304,11 @@ def stop_remote_postgres(conn: fabric.Connection, case: DbConfig):
     conn.run(f'{pgctl} stop -D {data_dir}')
 
 
-def create_bbase_config(sf, bb_config: TestDriverConfig, out):
+def create_bbase_config(sf, bb_config: BBaseConfig, out, local=False):
     """Set connection information and scale factor in a BenchBase config file."""
     tree = ET.parse('bbase_config/sample_tpch_config.xml')
     params = tree.getroot()
-    params.find('url').text = f'jdbc:postgresql://{PG_HOST}:{PG_PORT}/TPCH_{sf}?sslmode=disable&amp;ApplicationName=tpch&amp;reWriteBatchedInserts=true'
+    params.find('url').text = f'jdbc:postgresql://{"localhost" if local else PG_HOST}:{PG_PORT}/TPCH_{sf}?sslmode=disable&amp;ApplicationName=tpch&amp;reWriteBatchedInserts=true'
     params.find('username').text = PG_USER
     params.find('password').text = PG_PASSWD
     params.find('scalefactor').text = str(sf)
@@ -327,7 +323,9 @@ def create_bbase_config(sf, bb_config: TestDriverConfig, out):
     work = ET.SubElement(works, 'work')
     ET.SubElement(work, 'serial').text = 'false'
     ET.SubElement(work, 'rate').text = 'unlimited'  # Rate is in queries per second (?)
-    ET.SubElement(work, 'weights').text = '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1'
+    ET.SubElement(work, 'weights').text = bb_config.workload
+    # ET.SubElement(work, 'weights').text = '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0'
+    # ET.SubElement(work, 'weights').text = '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1'
     ET.SubElement(work, 'arrival').text = 'regular'
     ET.SubElement(work, 'time').text = '300'  # Time to run the benchmark in seconds (?)
     # ET.SubElement(work, 'warmup').text = '0'
@@ -346,17 +344,17 @@ def run_bbase_load(config):
     ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
 
 
-def run_bbase_test(case: DbConfig, bb_config: TestDriverConfig):
+def run_bbase_test(dbconf: DbConfig, bbconf: BBaseConfig, pgconf: RuntimePgConfig):
     """Run benchbase (on local machine) against PostgreSQL on the remote host.
     Will start & stop PostgreSQL on the remote host.
     """
     temp_bbase_config = BUILD_ROOT / 'bbase_tpch_config.xml'
 
-    create_bbase_config(case.sf, bb_config, temp_bbase_config)
+    create_bbase_config(dbconf.sf, bbconf, temp_bbase_config)
 
     with FabConnection(PG_HOST) as conn:
-        config_remote_postgres(conn, case)
-        start_remote_postgres(conn, case)
+        config_remote_postgres(conn, dbconf, pgconf)
+        start_remote_postgres(conn, dbconf)
 
     try:
         subprocess.Popen([
@@ -365,14 +363,14 @@ def run_bbase_test(case: DbConfig, bb_config: TestDriverConfig):
             '-b', 'tpch',
             '-c', str(temp_bbase_config),
             '--execute=true',
-            '-d', str(bb_config.results_dir),
+            '-d', str(bbconf.results_dir),
         ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
     finally:
         with FabConnection(PG_HOST) as conn:
-            stop_remote_postgres(conn, case)
+            stop_remote_postgres(conn, dbconf)
 
 
-def pg_exec_file(conn: postgresql.api.Connection, file):
+def pg_exec_file(conn: PgConnection, file):
     with open(file, 'r') as f:
         stmts = ''.join(f.readlines())
     conn.execute(stmts)
@@ -400,15 +398,17 @@ def create_and_populate_local_db(case: DbConfig):
             conn: PgConnection  # explicitly set type hint since type deduction fails here...
             pg_exec_file(conn, create_ddl_file)
             # Disable autovacuum and WAL for the large tables while loading
-            print('Disabling VACUUM and WAL on large tables for loading...')
+            print('Disabling VACUUM on large tables for loading...')
+            # print('Disabling VACUUM and WAL on large tables for loading...')
             conn.execute('ALTER TABLE lineitem SET (autovacuum_enabled = off);')
             conn.execute('ALTER TABLE orders SET (autovacuum_enabled = off);')
-            conn.execute('ALTER TABLE lineitem SET UNLOGGED;')
-            conn.execute('ALTER TABLE orders SET UNLOGGED;')
+            conn.execute('ALTER TABLE partsupp SET (autovacuum_enabled = off);')
+            # conn.execute('ALTER TABLE lineitem SET UNLOGGED;')
+            # conn.execute('ALTER TABLE orders SET UNLOGGED;')
 
         print(f'BenchBase: loading test data...')
         bbase_config_file = BUILD_ROOT / 'load_config.xml'
-        create_bbase_config(case.sf, TestDriverConfig(nworkers=1), bbase_config_file)
+        create_bbase_config(case.sf, BBaseConfig(nworkers=1, results_dir=None, workload=''), bbase_config_file, local=True)
         run_bbase_load(bbase_config_file)
 
         # Re-enable vacuum after loading is complete
@@ -418,20 +418,25 @@ def create_and_populate_local_db(case: DbConfig):
             print('Re-enable auto vacuum...')
             conn.execute('ALTER TABLE lineitem SET (autovacuum_enabled = on);')
             conn.execute('ALTER TABLE orders SET (autovacuum_enabled = on);')
-            print('Re-enable WAL...')
-            conn.execute('ALTER TABLE lineitem SET LOGGED;')
-            conn.execute('ALTER TABLE orders SET LOGGED;')
+            conn.execute('ALTER TABLE partsupp SET (autovacuum_enabled = on);')
+            # print('Re-enable WAL...')
+            # conn.execute('ALTER TABLE lineitem SET LOGGED;')
+            # conn.execute('ALTER TABLE orders SET LOGGED;')
             print('ANALYZE large tables...')
             conn.execute('ANALYZE lineitem;')
             conn.execute('ANALYZE orders;')
+            conn.execute('ANALYZE partsupp;')
 
     finally:
         print(f'Shutting down database cluster {cl.data_directory}...')
         pg_stop_db(cl)
 
 
-def create_indexes(conn: PgConnection, index_dir: str):
-    pg_exec_file(conn, f'ddl/index/{index_dir}/create.sql')
+def create_indexes(conn: PgConnection, index_dir: str, sf: int):
+    with open(f'dd/index/{index_dir}/create.sql', 'r') as f:
+        lines = f.readlines()
+    stmts = ''.join(lines).replace('REPLACEME_BRIN_PAGES_PER_RANGE', str(BASE_PAGES_PER_RANGE / sf))
+    conn.execute(stmts)
 
 
 def drop_indexes(conn: PgConnection, index_dir: str):
@@ -442,6 +447,50 @@ def cluster_tables(conn: PgConnection, cluster_script: str):
     if cluster_script is None:
         return
     pg_exec_file(conn, f'ddl/cluster/{cluster_script}.sql')
+
+
+def rename_bbase_results(root: Path):
+    """After running benchbase tests, rename the files to remove the date prefix.
+    We have a prefix on the folder name instead.
+    """
+
+    # os.listdir lists the file names in the directory, not the full path
+    pre = None
+    f: str
+    for f in os.listdir(root):
+        i = f.find('.') + 1
+        if pre is None:
+            pre = f[:i]
+
+        assert f[:i] == pre, 'result files didn\'t all have the same prefix!'
+
+        src = f
+        dst = f[i:]
+
+        os.rename(root / src, root / dst)
+
+
+def read_cluster_file():
+    try:
+        with open(LAST_CLUSTER_FILE, 'r') as f:
+            x: dict = json.JSONDecoder().decode(''.join(f.readlines()))
+            return {int(k): v for k, v in x.items()}
+    except FileNotFoundError:
+        return {}
+
+
+def update_cluster_file(sf: int, cluster: str):
+    clusters = read_cluster_file()
+
+    if cluster is None:
+        return clusters
+
+    clusters[sf] = cluster
+
+    with open(LAST_CLUSTER_FILE, 'w') as f:
+        f.write(json.JSONEncoder(indent=2).encode(clusters))
+
+    return clusters
 
 
 def one_time_pg_setup():
@@ -477,6 +526,17 @@ def refresh_pg_installs():
     # Re-compile and re-install postgres for each configuration
     for brnch in POSTGRES_ALL_BRANCHES.keys():
         for blk_sz in PG_BLK_SIZES:
+            # touch PBM related files to reduce chance of needing to clean and fully rebuild...
+            if brnch != 'base':
+                incl_path = POSTGRES_SRC_PATH / brnch / 'src' / 'include' / 'storage'
+                (incl_path / 'pbm.h').touch(exist_ok=True)
+
+                src_path = POSTGRES_SRC_PATH / brnch / 'src' / 'backend' / 'storage' / 'buffer'
+                (src_path / 'pbm.c').touch(exist_ok=True)
+                (src_path / 'pbm_internal.c').touch(exist_ok=True)
+                (src_path / 'freelist.c').touch(exist_ok=True)
+                (src_path / 'bufmgr.c').touch(exist_ok=True)
+
             build_postgres(brnch, blk_sz)
 
 
@@ -492,6 +552,7 @@ def clean_pg_installs(base=False):
         for brnch in POSTGRES_PBM_BRANCHES.keys():
             clean_postgres(brnch, blk_sz)
 
+
 def one_time_benchbase_setup():
     """Build and install BenchBase on current host."""
     print('Cloning BenchBase...')
@@ -504,8 +565,8 @@ def gen_test_data(sf: int):
     if sf is None:
         raise Exception(f'Must specify scale factor when loading data!')
 
-        # Generate test data for all block sizes (only base branch is needed for generating data)
-        print(f'Initializing test data with scale factor {sf}')
+    # Generate test data for all block sizes (only base branch is needed for generating data)
+    print(f'Initializing test data with scale factor {sf}')
     for blk_sz in PG_BLK_SIZES:
         print('--------------------------------------------------------------------------------')
         print(f'---- Initializing data for blk_sz={blk_sz}, sf={sf}')
@@ -525,9 +586,8 @@ def clean_indexes(args):
         raise Exception(f'Must specify index type!')
 
     # remember how we clustered last
-    if args.cluster is not None:
-        with open('last_cluster.txt', 'w') as f:
-            f.write(args.cluster)
+    update_cluster_file(args.sf, args.cluster)
+
 
     for blk_sz in PG_BLK_SIZES:
         print(f'~~~~~~~~~~ Cleaning up indexes from ddl/index/{args.index_type}/ and clustering {args.cluster}, blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
@@ -544,7 +604,7 @@ def clean_indexes(args):
                     # If asked to cluster: create the indexes temporarily to cluster
                     if args.cluster is not None:
                         print(f'Creating indexes {args.index_type} to cluster by {args.cluster}...')
-                        create_indexes(pgconn, args.index_type)
+                        create_indexes(pgconn, args.index_type, args.sf)
                         cluster_tables(pgconn, args.cluster)
                         drop_indexes(pgconn, args.index_type)
 
@@ -561,10 +621,17 @@ def run_benchmarks(args):
     if args.index_type is None:
         raise Exception(f'Must specify index type!')
 
+    if args.workload not in workload_weights:
+        raise Exception(f'Unknown workload type {args.workload}')
+    weights = workload_weights[args.workload]
+
+    pgconf = RuntimePgConfig(
+        shared_buffers=args.shmem,
+        synchronize_seqscans='on' if args.syncscans else 'off',
+    )
+
     # remember how we clustered last
-    if args.cluster is not None:
-        with open(LAST_CLUSTER_FILE, 'w') as f:
-            f.write(args.cluster)
+    clusters = update_cluster_file(args.sf, args.cluster)
 
     # create test dir
     ts = dt.now()
@@ -573,21 +640,29 @@ def run_benchmarks(args):
     os.mkdir(results_dir)
 
     # store script config in test dir
-    try:
-        with open(LAST_CLUSTER_FILE, 'r') as f:
-            last_cluster = f.readline()
-    except FileNotFoundError:
-        last_cluster = None
+    last_cluster = clusters[args.sf]
     with open(results_dir / 'test_config.json', 'w') as f:
         config = {
             'clustering': last_cluster,
             'indexes': args.index_type,
             'scalefactor': args.sf,
+            **pgconf._asdict(),
         }
-        f.write(JSONEncoder(indent=2).encode(config))
+        f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(config))
         f.write('\n')  # ensure trailing newline
 
-    print(f'Running experiments with scale factor {args.sf} and index definitions under ddl/index/{args.index_type}/, clustering with {args.cluster}')
+    print(f'======================================================================')
+    print(f'== Running experiments with:')
+    print(f'==   Scale factor:          {args.sf}')
+    print(f'==   Workload:              {args.workload}     (weights: {weights})')
+    print(f'==   Shared memory:         {args.shmem}')
+    print(f'==   Index definitions:     ddl/index/{args.index_type}/')
+    print(f'==   Clustering:            dd/cluster/{last_cluster}.sql  ({args.cluster})')
+    print(f'==   Terminals:             {args.parallelism}')
+    print(f'==   SyncScans:             {pgconf.synchronize_seqscans}')
+    print(f'== Storing results to {results_dir}')
+    print(f'======================================================================')
+
     for blk_sz in PG_BLK_SIZES:
 
         # Create indexes once for the block size before the tests with different branches
@@ -603,7 +678,7 @@ def run_benchmarks(args):
                     drop_indexes(pgconn, args.index_type)
 
                     print(f'create indexes: {args.index_type}')
-                    create_indexes(pgconn, args.index_type)
+                    create_indexes(pgconn, args.index_type, args.sf)
 
                     print(f'cluster tables: {args.cluster}')
                     cluster_tables(pgconn, args.cluster)
@@ -621,7 +696,8 @@ def run_benchmarks(args):
                 dbconf = DbConfig(brnch, blk_sz, sf=args.sf)
                 results_subdir = results_dir / f'{brnch}_blksz{blk_sz}'
 
-                run_bbase_test(dbconf, TestDriverConfig(nworkers=8, results_dir=results_subdir))
+                run_bbase_test(dbconf, BBaseConfig(nworkers=args.parallelism, results_dir=results_subdir, workload=weights), pgconf)
+                rename_bbase_results(results_subdir)
 
         finally:
             # Teardown indexes again at the end
@@ -634,29 +710,9 @@ def run_benchmarks(args):
                 stop_remote_postgres(fabconn, dbconf)
 
 
-
-
-
-def test_process_results(root: Path):
-    # os.listdir lists the file names in the directory, not the full path
-    pre = None
-    for f in os.listdir(root):
-        src = f
-        i = f.find('.') + 1
-        if pre is None:
-            pre = f[:i]
-
-        assert f[:i] == pre, 'result files didn\'t all have the same prefix!'
-        dst = f[i:]
-
-        print(f'{src =}, {i =}, {dst =}')
-
-        os.rename(root / src, root / dst)
-
-
-
-
-
+###################
+#  MAIN FUNCTION  #
+###################
 
 MAIN_HELP_TEXT = """Action to perform. Actions are:
     pg_setup:           clone and install postgres for each test configuration
@@ -692,10 +748,18 @@ if __name__ == '__main__':
         'testing'
     ], help=MAIN_HELP_TEXT)
     parser.add_argument('-sf', '--scale-factor', type=int, default=None, dest='sf')
+    parser.add_argument('-w', '--workload', type=str, default='tpch',
+                        help=f'Workload configuration. Options are: {", ".join(workload_weights.keys())}')
     parser.add_argument('-i', '--index-type', type=str, default=None, dest='index_type', metavar='INDEX',
                         help='Folder name under `ddl/index/` with `create.sql` and `drop.sql` to create and drop the indexes. (e.g. btree)')
     parser.add_argument('-c', '--cluster', type=str, default=None, dest='cluster',
                         help='Script name to cluster tables after indices are created under `ddl/cluster/`. (e.g. pkey)')
+    parser.add_argument('-sm', '--shared_buffers', type=str, default='8GB', dest='shmem',
+                        help='Amount of memory for PostgreSQL shared buffers. (GB, MB, or kB)')
+    parser.add_argument('-p', '--parallelism', type=int, default=8, dest='parallelism',
+                        help='Number of terminals (parallel query streams) in BenchBase')
+    parser.add_argument('--disable-syncscans', action='store_false', dest='syncscans',
+                        help='Disable syncronized scans')
     args = parser.parse_args()
 
     if args.action == 'pg_setup':
@@ -726,8 +790,10 @@ if __name__ == '__main__':
     elif args.action == 'testing':
         pass
 
-        test_process_results(RESULTS_ROOT / 'test_2')
+        # test_process_results(RESULTS_ROOT / 'test_2')
 
+        # clusters = update_cluster_file(7, '7 test')
+        # install_benchbase()
 
         # create_bbase_config(1, TestDriverConfig(23, 'testing/results'), 'TEST_CONFIG.xml')
 

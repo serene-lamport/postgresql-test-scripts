@@ -1,11 +1,10 @@
 TODO
 ====
 
-- [x] create the databases with whatever sizes -- one for each block size and scale factor, but NOT for each branch
-- [x] load data with benchbases
-- [x] indexes: can drop and re-create them hopefully? (what about primary keys?)
-- [ ] clustering:
-    - [x] allow specifying how to cluster
-    - [ ] revisit: is it better to simply cluster every time?
-- [x] database configuration files!
-- [x] benchbase configuration files!
+- [ ] revisit clustering: is it better to simply cluster every time?
+- [ ] index defs:
+    - [ ] add BRIN/bloom for other tables
+    - [ ] add a brin-mostly setup (only brin/blook for ones where that makes sense, keep the btrees where they can't be replaced)
+    - [ ] brin only with no btrees (at least for the large tables)
+- [ ] process results:
+    - [ ] ...?
