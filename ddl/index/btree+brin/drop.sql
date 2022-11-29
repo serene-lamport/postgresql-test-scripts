@@ -1,5 +1,5 @@
 /*
- * Drop indices and constraints created by brin+btrees/create.sql
+ * Drop indices and constraints created by btree+brin/create.sql
  */
 
 -- REGION indices
