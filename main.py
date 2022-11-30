@@ -42,10 +42,14 @@ BUILD_ROOT = Path('/home/ta3vande/PG_TESTS')
 
 # Postgres block size (KiB)
 PG_BLK_SIZES = [8, 32]
-# PG_BLK_SIZES = [8]  # for testing this script itself
+# PG_BLK_SIZES = [8]
 
 # Time to run tests (s)
 BBASE_TIME = 600
+
+# Log_2 of the block group size (KiB) (combined with block sizes to determine shift ammount)
+LOG_BLOCK_GROUP_SIZE = 8
+# ^ TODO try different values, configure in terms of KiB size... maybe make a script parameter (block sizes too)
 
 
 #################################
@@ -78,6 +82,7 @@ BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
 
 # Results
 RESULTS_ROOT = BUILD_ROOT / 'results'
+CONFIG_FILE_NAME = 'test_config.json'
 
 # Data to remember between runs. These are NOT absolute paths, they are relative to the git repo.
 LAST_CLUSTER_FILE = 'last_cluster.json'
@@ -177,6 +182,13 @@ def get_data_path(blk_sz: int, tpch_sf) -> Path:
     return PG_DATA_ROOT / f'pg_tpch_sf{tpch_sf}_blksz{blk_sz}'
 
 
+def pbm_blk_shift(blk_sz: int):
+    res = LOG_BLOCK_GROUP_SIZE
+    while blk_sz > 1:
+        res -= 1
+        blk_sz //= 2
+
+
 def config_postgres_repo(brnch: str, blk_sz: int):
     """Runs `./configure` to setup the build for postgres with the provided branch and block size."""
     build_path = get_build_path(brnch, blk_sz)
@@ -188,6 +200,7 @@ def config_postgres_repo(brnch: str, blk_sz: int):
         f'--with-blocksize={blk_sz}',
         f'--prefix={install_path}',
         f'--with-extra-version={brnch}_{blk_sz}',
+        f'--with-pbmblockshift={pbm_blk_shift(blk_sz)}'
     ], cwd=build_path).wait()
 
 
@@ -703,12 +716,14 @@ def run_benchmarks(args):
     # store script config in test dir
     test_cluster = args.cluster or prev_cluster
     test_indexes = args.index_type or prev_indexes
-    with open(results_dir / 'test_config.json', 'w') as f:
+    with open(results_dir / CONFIG_FILE_NAME, 'w') as f:
         config = {
             'clustering': test_cluster,
             'indexes': test_indexes,
             'scalefactor': args.sf,
             'time': BBASE_TIME,
+            'parallelism': args.parllelism,
+            'workload': args.workload,
             **pgconf._asdict(),
         }
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(config))
@@ -856,11 +871,10 @@ if __name__ == '__main__':
 
 
 # TODO: ...
-# - [ ] decide what indices to use, how to cluster tables
-# - [ ] decide what workloads to test
-# - [ ] microbenchmarks?
-# - [ ] sort out indices!
-# - [ ] how to configure the PBM? Only use separate branches, or modify preprocessor variables?
+# - [ ] re-build with consistent block group size (configure shift amounts)
+# - [ ] more build configs with different block-group sizes, other config variables? (or branches?)
+# - [ ] make block size and other compile-time variables arguments? so one call only tests each branch (2 for now, instead of 4+ tests, increasing multiplicatively...)
+# - [ ] figure out file locks thing!
 # - [ ] ...
 
 # MAYBE: ...
