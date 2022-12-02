@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
 import os
+from typing import Optional
+
 import git
 import shutil
 import subprocess
@@ -45,7 +47,8 @@ PG_BLK_SIZES = [8, 32]
 # PG_BLK_SIZES = [8]
 
 # Time to run tests (s)
-BBASE_TIME = 600
+BBASE_TIME = 60
+# BBASE_TIME = 600
 
 # Log_2 of the block group size (KiB) (combined with block sizes to determine shift ammount)
 LOG_BLOCK_GROUP_SIZE = 8
@@ -110,11 +113,50 @@ DbConfig = namedtuple('DbConfig', ['brnch', 'blk_sz', 'sf'])
 BBaseConfig = namedtuple('BBaseConfig', ['nworkers', 'results_dir', 'workload'])
 # PostgreSQL configuration
 
-
 # PostgreSQL configuration for the test that isn't relevant for which binary to use (branch and block size) or which
 # database cluster (block size and scale factor). These get mapped directly to postgresql.conf so the field names
 # should match the config field.
 RuntimePgConfig = namedtuple('RuntimePgConfig', ['shared_buffers', 'synchronize_seqscans'])
+
+# Remember how a database is setup: what indexes and clustering?
+DbSetup = namedtuple('DbSetup', ['indexes', 'cluster'])
+
+
+def read_last_config() -> dict:
+    try:
+        with open('last_config.json', 'r') as f:
+            decoded = json.JSONDecoder().decode(f.read())
+    except FileNotFoundError:
+        decoded = []
+
+    last_conf = {}
+
+    for d in decoded:
+        d_k = DbConfig(**{k: v for k, v in d.items() if k in DbConfig._fields and k != 'brnch'}, brnch=None)
+        d_v = DbSetup(**{k: v for k, v in d.items() if k in DbSetup._fields})
+
+        last_conf[d_k] = d_v
+
+    return last_conf
+
+
+def dbconf_to_dict(c: DbConfig):
+    ret = c._asdict()
+    del ret['brnch']
+    return ret
+
+
+def update_last_conf(conf: DbConfig, setup: DbSetup):
+    last_conf = read_last_config()
+
+    c = conf._replace(brnch=None)
+    last_conf[c] = setup
+
+    to_encode = [{**dbconf_to_dict(k), **v._asdict()} for k, v in last_conf.items()]
+
+    with open('last_config.json', 'w') as f:
+        encoder = json.JSONEncoder(indent=2)
+        f.write(encoder.encode(to_encode))
 
 
 class GitProgressBar(git.RemoteProgress):
@@ -195,13 +237,19 @@ def config_postgres_repo(brnch: str, blk_sz: int):
     install_path = get_install_path(brnch, blk_sz)
     print(f'Configuring postgres {brnch} with block size {blk_sz}')
     build_path.mkdir(exist_ok=True, parents=True)
-    subprocess.Popen([
+
+    config_args = [
         POSTGRES_SRC_PATH / brnch / 'configure',
         f'--with-blocksize={blk_sz}',
         f'--prefix={install_path}',
         f'--with-extra-version={brnch}_{blk_sz}',
-        f'--with-pbmblockshift={pbm_blk_shift(blk_sz)}'
-    ], cwd=build_path).wait()
+    ]
+
+    # for PBM branches, need some extra config args
+    if brnch != 'base':
+        config_args.append('--with-pbmblockshift={pbm_blk_shift(blk_sz)}')
+
+    subprocess.Popen(config_args, cwd=build_path).wait()
 
 
 def build_postgres(brnch: str, blk_sz: int):
@@ -494,7 +542,7 @@ def read_json_file(fname):
         return {}
 
 
-def update_json_file(fname, sf: int, val: str):
+def update_json_file(fname, sf: int, val: Optional[str]):
     res = read_json_file(fname)
 
     # if val is None:
@@ -535,8 +583,9 @@ def reconfigure_clustering(pgconn: PgConnection, prev_cluster: str, new_cluster:
     cluster_tables(pgconn, new_cluster)
 
 
-def setup_indexes_cluster(blk_sz: int, sf: int, *, prev_indexes: str, new_indexes: str, prev_cluster: str, new_cluster: str):
-    """Change indexes and clustering on the database."""
+def setup_indexes_cluster(blk_sz: int, sf: int, *, prev_indexes: str, new_indexes: str, prev_cluster: str, new_cluster: Optional[str]):
+    """Change indexes and clustering on the database. Remembers the changes in `last_config.json`"""
+
     with FabConnection(PG_HOST) as fabconn:
         dbconf = DbConfig('base', blk_sz=blk_sz, sf=sf)
         # Use large amount of memory for creating indexes
@@ -546,10 +595,14 @@ def setup_indexes_cluster(blk_sz: int, sf: int, *, prev_indexes: str, new_indexe
         try:
             with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
                 reconfigure_indexes(pgconn, args.sf, prev_indexes=prev_indexes, new_indexes=new_indexes)
-                reconfigure_clustering(pgconn, prev_cluster=prev_cluster, new_cluster=new_cluster)
+                reconfigure_clustering(pgconn, prev_cluster=prev_cluster, new_cluster=new_cluster or prev_cluster)
+
+            # remember the changes
+            update_last_conf(dbconf, DbSetup(indexes=new_indexes, cluster=new_cluster))
 
         finally:
             stop_remote_postgres(fabconn, dbconf)
+
 
 def one_time_pg_setup():
     """Gets postgres installed for each version that is needed.
@@ -619,73 +672,145 @@ def one_time_benchbase_setup():
     install_benchbase()
 
 
-def gen_test_data(sf: int):
+def gen_test_data(sf: int, blk_sz: int):
     if sf is None:
         raise Exception(f'Must specify scale factor when loading data!')
 
-    # Generate test data for all block sizes (only base branch is needed for generating data)
-    print(f'Initializing test data with scale factor {sf}')
-    for blk_sz in PG_BLK_SIZES:
-        print('--------------------------------------------------------------------------------')
-        print(f'---- Initializing data for blk_sz={blk_sz}, sf={sf}')
-        print('--------------------------------------------------------------------------------')
-        dbconf = DbConfig('base', blk_sz, sf)
-        create_and_populate_local_db(dbconf)
+    # Generate test data (only base branch is needed for generating data)
+    print('--------------------------------------------------------------------------------')
+    print(f'---- Initializing data for blk_sz={blk_sz}, sf={sf}')
+    print('--------------------------------------------------------------------------------')
+    dbconf = DbConfig('base', blk_sz, sf)
+    create_and_populate_local_db(dbconf)
 
 
-def clean_indexes(args):
-    """Drop the specified indexes. Mainly used as a cleanup function if something goes wrong."""
-    if args.sf is None:
+# def clean_indexes(args):
+#     """Drop the specified indexes. Mainly used as a cleanup function if something goes wrong."""
+#     if args.sf is None:
+#         raise Exception(f'Must specify scale factor of databases to clean up!')
+#
+#     if args.index_type is None:
+#         raise Exception(f'Must specify index type to drop!')
+#
+#     for blk_sz in PG_BLK_SIZES:
+#         print(f'~~~~~~~~~~ Dropping indexes from ddl/index/{args.index_type}/ for blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
+#         dbconf = DbConfig('base', blk_sz, args.sf)
+#         with FabConnection(PG_HOST) as fabconn:
+#             start_remote_postgres(fabconn, dbconf)
+#
+#             try:
+#                 with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
+#                     print(f'dropping indexes {args.index_type}...')
+#                     drop_indexes(pgconn, args.index_type)
+#
+#             finally:
+#                 stop_remote_postgres(fabconn, dbconf)
+#
+#     # update state: no indexes now
+#     update_json_file(LAST_INDEXES_FILE, args.sf, None)
+#     print(f'~~~~~~~~~~ Specified indexes have been dropped ~~~~~~~~~~')
+
+
+def drop_all_indexes(sf: int, blk_sz: int):
+    """Drop all indexes and constraints. More powerful cleanup function if something goes really wrong."""
+    if sf is None:
         raise Exception(f'Must specify scale factor of databases to clean up!')
 
-    if args.index_type is None:
-        raise Exception(f'Must specify index type to drop!')
+    print(f'~~~~~~~~~~ Dropping all indexes and constraints for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
+    dbconf = DbConfig('base', blk_sz, sf)
+    with FabConnection(PG_HOST) as fabconn:
+        start_remote_postgres(fabconn, dbconf)
 
-    for blk_sz in PG_BLK_SIZES:
-        print(f'~~~~~~~~~~ Dropping indexes from ddl/index/{args.index_type}/ for blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
-        dbconf = DbConfig('base', blk_sz, args.sf)
-        with FabConnection(PG_HOST) as fabconn:
-            start_remote_postgres(fabconn, dbconf)
+        try:
+            with pg.open(f'pq://{PG_HOST}/TPCH_{sf}') as pgconn:
+                # find and drop constraints
+                all_constraints = pgconn.query("""
+                    select conrelid::regclass as table, conname as constraint
+                    from pg_constraint
+                    where connamespace = 'public'::regnamespace
+                """)
 
-            try:
-                with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
-                    print(f'dropping indexes {args.index_type}...')
-                    drop_indexes(pgconn, args.index_type)
+                constraints_str = '\n  '.join(f'{c} \t({t})' for t, c in all_constraints)
+                print(f'\nFound constraints:\n  {constraints_str}')
 
-            finally:
-                stop_remote_postgres(fabconn, dbconf)
+                print('Dropping constraints...')
+                for t, c in all_constraints:
+                    pgconn.execute(f'ALTER TABLE {t} DROP CONSTRAINT IF EXISTS {c} CASCADE')
+
+                # find and drop indexes
+                all_indexes = pgconn.query("""
+                    select tablename, indexname
+                    from pg_indexes
+                    where schemaname = 'public'
+                """)
+
+                indexes_str = '\n  '.join(f'{idx} \t({t})' for t, idx in all_indexes)
+                print(f'\nFound indexes:\n  {indexes_str}')
+
+                print("Dropping indexes...")
+                for t, idx in all_indexes:
+                    pgconn.execute(f'DROP INDEX IF EXISTS {idx} CASCADE')
+
+                update_last_conf(dbconf, DbSetup(indexes=None, cluster=None))
+
+        finally:
+            stop_remote_postgres(fabconn, dbconf)
 
     # update state: no indexes now
-    update_json_file(LAST_INDEXES_FILE, args.sf, None)
-    print(f'~~~~~~~~~~ Specified indexes have been dropped ~~~~~~~~~~')
+    # update_json_file(LAST_INDEXES_FILE, sf, None)
+    print(f'~~~~~~~~~~ All indexes have been dropped ~~~~~~~~~~')
 
 
-def recluster(args):
+def reindex(args):
     """Change the clustering of the database without running benchmarks."""
     if args.sf is None:
         raise Exception(f'Must specify scale factor of databases to recluster!')
 
-    if args.cluster is None:
-        raise Exception(f'Must specify new clustering!')
 
-    # read in what indexes/clustering is currently used in the database
-    last_cluster_map = read_json_file(LAST_CLUSTER_FILE)
-    last_indexes_map = read_json_file(LAST_INDEXES_FILE)
-    prev_cluster = last_cluster_map.get(args.sf)
-    prev_indexes = last_indexes_map.get(args.sf)
+    # # read in what indexes/clustering is currently used in the database
+    # last_cluster_map = read_json_file(LAST_CLUSTER_FILE)
+    # last_indexes_map = read_json_file(LAST_INDEXES_FILE)
+    # prev_cluster = last_cluster_map.get(args.sf)
+    # prev_indexes = last_indexes_map.get(args.sf)
 
-    new_cluster = args.cluster
+
+
+
+    last_config = read_last_config()
+    cur_setup: DbSetup = last_config.get(DbConfig(None, args.blk_sz, args.sf)) or DbSetup(None, None)
+
+    prev_indexes = cur_setup.indexes
+    prev_cluster = cur_setup.cluster
+
+
+    # special case: if 'none' is specified we want to forget what the clustering is (and do nothing)
+    # in this case set new_cluster to None (handled by setup_indexes_cluster, which updates our state file)
+    # if args.cluster is none, it means it was not specified so stay with previous clustering
+    forget_clustering = (args.cluster is not None and args.cluster.lower() == 'none')
+    if forget_clustering:
+        new_cluster = None
+    else:
+        new_cluster = args.cluster or prev_cluster
     new_indexes = args.index_type or prev_indexes
 
-    for blk_sz in PG_BLK_SIZES:
-        print(f'~~~~~~~~~~ Reclustering using {args.cluster} for blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
-        setup_indexes_cluster(blk_sz, args.sf,
-                              prev_indexes=prev_indexes, new_indexes=new_indexes,
-                              prev_cluster=prev_cluster, new_cluster=new_cluster)
 
-    # update state so we know what indexes we were using next time.
-    update_json_file(LAST_CLUSTER_FILE, args.sf, new_cluster)
-    update_json_file(LAST_INDEXES_FILE, args.sf, new_indexes)
+
+    print(f'~~~~~~~~~~ Reconfiguring using indexes {new_indexes}, clustering {new_cluster} for blk_sz={args.blk_sz}, sf={args.sf} ~~~~~~~~~~')
+    setup_indexes_cluster(args.blk_sz, args.sf,
+                          prev_indexes=prev_indexes, new_indexes=new_indexes,
+                          prev_cluster=prev_cluster, new_cluster=new_cluster)
+
+    # # remember the changes
+    # # special case: if 'none' is given as cluster then forget how we are clustered. (even though it won't change)
+    # nc = None if forget_clustering else new_cluster
+    # update_last_conf(DbConfig('base', blk_sz=blk_sz, sf=args.sf), DbSetup(indexes=new_indexes, cluster=nc))
+
+    # if forget_clustering:
+    #     new_cluster = None
+
+    # # update state so we know what indexes we were using next time.
+    # update_json_file(LAST_CLUSTER_FILE, args.sf, new_cluster)
+    # update_json_file(LAST_INDEXES_FILE, args.sf, new_indexes)
 
 
 def run_benchmarks(args):
@@ -701,11 +826,18 @@ def run_benchmarks(args):
         synchronize_seqscans='on' if args.syncscans else 'off',
     )
 
-    # read in what indexes/clustering is currently used in the database
-    last_cluster_map = read_json_file(LAST_CLUSTER_FILE)
-    last_indexes_map = read_json_file(LAST_INDEXES_FILE)
-    prev_cluster = last_cluster_map.get(args.sf)
-    prev_indexes = last_indexes_map.get(args.sf)
+    # # read in what indexes/clustering is currently used in the database
+    # last_cluster_map = read_json_file(LAST_CLUSTER_FILE)
+    # last_indexes_map = read_json_file(LAST_INDEXES_FILE)
+    # prev_cluster = last_cluster_map.get(args.sf)
+    # prev_indexes = last_indexes_map.get(args.sf)
+
+
+    last_config = read_last_config()
+    cur_setup: DbSetup = last_config.get(DbConfig(None, args.blk_sz, args.sf)) or DbSetup(None, None)
+
+    prev_indexes = cur_setup.indexes
+    prev_cluster = cur_setup.cluster
 
     # create test dir
     ts = dt.now()
@@ -718,12 +850,14 @@ def run_benchmarks(args):
     test_indexes = args.index_type or prev_indexes
     with open(results_dir / CONFIG_FILE_NAME, 'w') as f:
         config = {
+            'experiment': args.experiment,
             'clustering': test_cluster,
             'indexes': test_indexes,
             'scalefactor': args.sf,
             'time': BBASE_TIME,
-            'parallelism': args.parllelism,
+            'parallelism': args.parallelism,
             'workload': args.workload,
+            'block_group_size': 2**LOG_BLOCK_GROUP_SIZE,
             **pgconf._asdict(),
         }
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(config))
@@ -733,6 +867,7 @@ def run_benchmarks(args):
     print(f'== Running experiments with:')
     print(f'==   Time:                  {BBASE_TIME // 60} min{"" if BBASE_TIME % 60 == 0 else str(BBASE_TIME % 60) + " s"}')
     print(f'==   Scale factor:          {args.sf}')
+    print(f'==   Block size:            {args.blk_sz} KiB')
     print(f'==   Workload:              {args.workload}     (weights: {weights})')
     print(f'==   Shared memory:         {args.shmem}')
     print(f'==   Index definitions:     ddl/index/{test_indexes}/   (args.index_type)')
@@ -742,33 +877,31 @@ def run_benchmarks(args):
     print(f'== Storing results to {results_dir}')
     print(f'======================================================================')
 
-    for blk_sz in PG_BLK_SIZES:
-        # Create indexes once for the block size before the tests with different branches
-        print(f'~~~~~~~~~~ Setup indexes={test_indexes}, clustering={test_cluster} for blk_sz={blk_sz}, sf={args.sf} ~~~~~~~~~~')
+    # Create indexes once for the block size before the tests with different branches
+    print(f'~~~~~~~~~~ Setup indexes={test_indexes}, clustering={test_cluster} for blk_sz={args.blk_sz}, sf={args.sf} ~~~~~~~~~~')
 
-        with FabConnection(PG_HOST) as fabconn:
-            setup_indexes_cluster(blk_sz, args.sf,
-                                  prev_indexes=prev_indexes, new_indexes=test_indexes,
-                                  prev_cluster=prev_cluster, new_cluster=test_cluster)
+    with FabConnection(PG_HOST) as fabconn:
+        setup_indexes_cluster(args.blk_sz, args.sf,
+                              prev_indexes=prev_indexes, new_indexes=test_indexes,
+                              prev_cluster=prev_cluster, new_cluster=test_cluster)
 
-    # update state so we know what indexes we were using next time.
-    update_json_file(LAST_CLUSTER_FILE, args.sf, test_cluster)
-    update_json_file(LAST_INDEXES_FILE, args.sf, test_indexes)
+    # # update state so we know what indexes we were using next time.
+    # update_json_file(LAST_CLUSTER_FILE, args.sf, test_cluster)
+    # update_json_file(LAST_INDEXES_FILE, args.sf, test_indexes)
 
     print(f'~~~~~~~~~~ Index and clustering setup done! Running the real tests... ~~~~~~~~~~')
 
     # Actually run the tests
-    for blk_sz in PG_BLK_SIZES:
-        for brnch in POSTGRES_ALL_BRANCHES.keys():
-            print('--------------------------------------------------------------------------------')
-            print(f'---- Running experiments for branch={brnch}, blk_sz={blk_sz}, sf={args.sf}')
-            print('--------------------------------------------------------------------------------')
+    for brnch in POSTGRES_ALL_BRANCHES.keys():
+        print('--------------------------------------------------------------------------------')
+        print(f'---- Running experiments for branch={brnch}, blk_sz={args.blk_sz}, sf={args.sf}')
+        print('--------------------------------------------------------------------------------')
 
-            dbconf = DbConfig(brnch, blk_sz, sf=args.sf)
-            results_subdir = results_dir / f'{brnch}_blksz{blk_sz}'
+        dbconf = DbConfig(brnch, args.blk_sz, sf=args.sf)
+        results_subdir = results_dir / f'{brnch}_blksz{args.blk_sz}'
 
-            run_bbase_test(dbconf, BBaseConfig(nworkers=args.parallelism, results_dir=results_subdir, workload=weights), pgconf)
-            rename_bbase_results(results_subdir)
+        run_bbase_test(dbconf, BBaseConfig(nworkers=args.parallelism, results_dir=results_subdir, workload=weights), pgconf)
+        rename_bbase_results(results_subdir)
 
 
 ###################
@@ -782,9 +915,8 @@ MAIN_HELP_TEXT = """Action to perform. Actions are:
     pg_clean+base:      `make clean` for PBM installations AND the default installation
     benchbase_setup:    install benchbase on current host
     gen_test_data:      load test data for the given scale factor for all test configurations
-    drop_indexes:       used to remove indexes specified by --index-type.
-    recluster:          set the clustering without running benchmarks, and if --index-type is
-                        specifed the indexes will also be set up (first).
+    drop_indexes:       used to remove and indexes and constraints for given scale factor
+    reindex:            set the indexes clustering without running benchmarks
     bench:              run benchmarks using the specified scale factor and index type
 
     testing:            experiments, to be removed...
@@ -805,12 +937,14 @@ if __name__ == '__main__':
         'benchbase_setup',
         'gen_test_data',
         'drop_indexes',
-        'recluster',
+        'reindex',
         'bench',
         'testing'
     ], help=MAIN_HELP_TEXT)
     parser.add_argument('-sf', '--scale-factor', type=int, default=None, dest='sf')
-    parser.add_argument('-w', '--workload', type=str, default='tpch',
+    parser.add_argument('-bs', '--block-size', type=int, default=8, dest='blk_sz', choices=[1,2,4,8,16,32],
+                        help='Block size to use (KiB)')
+    parser.add_argument('-w', '--workload', type=str, default='tpch', choices=[*workload_weights.keys()],
                         help=f'Workload configuration. Options are: {", ".join(workload_weights.keys())}')
     parser.add_argument('-i', '--index-type', type=str, default=None, dest='index_type', metavar='INDEX',
                         help='Folder name under `ddl/index/` with `create.sql` and `drop.sql` to create and drop the indexes. (e.g. btree)')
@@ -822,6 +956,8 @@ if __name__ == '__main__':
                         help='Number of terminals (parallel query streams) in BenchBase')
     parser.add_argument('--disable-syncscans', action='store_false', dest='syncscans',
                         help='Disable syncronized scans')
+    parser.add_argument('-e', '--experiment', type=str, default=None, dest='experiment',
+                        help='Experiment name to help identify test results')
     args = parser.parse_args()
 
     if args.action == 'pg_setup':
@@ -843,10 +979,10 @@ if __name__ == '__main__':
         gen_test_data(args.sf)
 
     elif args.action == 'drop_indexes':
-        clean_indexes(args)
+        drop_all_indexes(args.sf)
 
-    elif args.action == 'recluster':
-        recluster(args)
+    elif args.action == 'reindex':
+        reindex(args)
 
     elif args.action == 'bench':
         run_benchmarks(args)
@@ -855,12 +991,13 @@ if __name__ == '__main__':
     elif args.action == 'testing':
         pass
 
-        # test_process_results(RESULTS_ROOT / 'test_2')
 
-        # clusters = update_cluster_file(7, '7 test')
-        # install_benchbase()
+        print(read_last_config())
+# TODO use this new config to track things!! update more appropriately...
+        update_last_conf(DbConfig('test 2', 4, 21), DbSetup('c', 'd'))
 
-        # create_bbase_config(1, TestDriverConfig(23, 'testing/results'), 'TEST_CONFIG.xml')
+        print(read_last_config())
+
 
     else:
         raise Exception(f'Unknown action {args.action}')
@@ -871,9 +1008,10 @@ if __name__ == '__main__':
 
 
 # TODO: ...
-# - [ ] re-build with consistent block group size (configure shift amounts)
+# - [?] re-build with consistent block group size (configure shift amounts)
 # - [ ] more build configs with different block-group sizes, other config variables? (or branches?)
 # - [ ] make block size and other compile-time variables arguments? so one call only tests each branch (2 for now, instead of 4+ tests, increasing multiplicatively...)
+#   - [ ] this requires making the last_cluster/last_indexes more sophisticated... need to remember what it is for every configuration!
 # - [ ] figure out file locks thing!
 # - [ ] ...
 

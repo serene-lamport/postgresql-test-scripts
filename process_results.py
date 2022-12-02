@@ -6,18 +6,25 @@ import json
 import csv
 from typing import Optional
 
-# TODO move these to common library file?
+
+###################
+#  CONFIGURATION  #
+###################
+# (these must be the same as main.py)
+# (TODO move to a shared file?)
+
 BUILD_ROOT = Path('/home/ta3vande/PG_TESTS')
 RESULTS_ROOT = BUILD_ROOT / 'results'
 
 CONFIG_FILE_NAME = 'test_config.json'
 
 
-
+#################
+#  CSV columns  #
+#################
 
 statio_main_cols = ['heap_blks_hit', 'heap_blks_read', 'idx_blks_hit', 'idx_blks_read']
 statio_toast_cols = ['tidx_blks_hit', 'tidx_blks_read', 'toast_blks_hit', 'toast_blks_read']
-
 bbase_latency_cols = [
     'Average Latency (microseconds)',
     'Maximum Latency (microseconds)',
@@ -30,6 +37,26 @@ bbase_latency_cols = [
     'Minimum Latency (microseconds)',
 ]
 
+csv_cols = [
+    # configuration from directory information:
+    'experiment', 'dir', 'branch', 'block size',
+    # configuration from configuration json file
+    'block_group_size', 'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'synchronize_seqscans',
+    'parallelism', 'time',
+    # from benchbase summary:
+    'Throughput (requests/second)', 'Goodput (requests/second)',
+    # latency from benchbase summary:
+    *bbase_latency_cols,
+    # stats from metrics
+    *statio_main_cols,
+    *('lineitem_' + col for col in statio_main_cols),
+    'hit_rate', 'lineitem_hit_rate',
+]
+
+
+##########
+#  CODE  #
+##########
 
 
 def read_config(config_dir) -> Optional[dict]:
@@ -83,21 +110,8 @@ if __name__ == '__main__':
     decoder = json.JSONDecoder()
     json_decode = decoder.decode
 
-    out = open('test.csv', 'w')
-    writer = csv.DictWriter(out, [
-        # configuration from directory information:
-        'dir', 'branch', 'block size',
-        # configuration from configuration json file
-        'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'synchronize_seqscans', 'parallelism', 'time',
-        # from benchbase summary:
-        'Throughput (requests/second)', 'Goodput (requests/second)',
-        # latency from benchbase summary:
-        *bbase_latency_cols,
-        # stats from metrics
-        *statio_main_cols,
-        *('lineitem_' + col for col in statio_main_cols),
-        'hit_rate', 'lineitem_hit_rate',
-    ], extrasaction='ignore')
+    out = open('results.csv', 'w')
+    writer = csv.DictWriter(out, csv_cols, extrasaction='ignore')
     writer.writeheader()
 
     # Process everythign in the results directory
