@@ -5,6 +5,7 @@ import os
 import json
 import csv
 from typing import Optional
+import pandas as pd
 
 
 ###################
@@ -17,6 +18,10 @@ BUILD_ROOT = Path('/home/ta3vande/PG_TESTS')
 RESULTS_ROOT = BUILD_ROOT / 'results'
 
 CONFIG_FILE_NAME = 'test_config.json'
+CONSTRAINTS_FILE = 'constraints.csv'
+INDEXES_FILE = 'indexes.csv'
+
+NON_DIR_RESULTS = [CONFIG_FILE_NAME, CONSTRAINTS_FILE, INDEXES_FILE]
 
 
 #################
@@ -41,8 +46,8 @@ csv_cols = [
     # configuration from directory information:
     'experiment', 'dir', 'branch', 'block size',
     # configuration from configuration json file
-    'block_group_size', 'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'synchronize_seqscans',
-    'parallelism', 'time',
+    'block_group_size', 'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'work_mem',
+    'synchronize_seqscans', 'parallelism', 'time',
     # from benchbase summary:
     'Throughput (requests/second)', 'Goodput (requests/second)',
     # latency from benchbase summary:
@@ -114,6 +119,8 @@ if __name__ == '__main__':
     writer = csv.DictWriter(out, csv_cols, extrasaction='ignore')
     writer.writeheader()
 
+    rows = []
+
     # Process everythign in the results directory
     conf_dir: str
     for conf_dir in os.listdir(RESULTS_ROOT):
@@ -125,11 +132,9 @@ if __name__ == '__main__':
             print(f'{conf_dir}: No config, skipping...')
             continue
 
-        # print(f'{conf_dir}: {config}')
-
         # each directory is a different run of benchbase
-
-        pgconfigs = [subdir.split('_blksz') for subdir in os.listdir(RESULTS_ROOT / conf_dir) if subdir != CONFIG_FILE_NAME]
+        subdirs = [subdir for subdir in os.listdir(RESULTS_ROOT / conf_dir) if subdir not in NON_DIR_RESULTS]
+        pgconfigs = [subdir.split('_blksz') for subdir in subdirs]
         try:
             pgconfigs = [(s[0], int(s[1])) for s in pgconfigs]
         except (ValueError, IndexError) as e:
@@ -159,51 +164,24 @@ if __name__ == '__main__':
                     **io_metrics,
                 }
 
+                rows.append(row)
+
                 writer.writerow(row)
 
         except FileNotFoundError as e:
             print(f'ERROR: could not find the benchbase files for {conf_dir}!')
             print(f'    {e!r}')
 
-
-
-
-
+    # df = pd.DataFrame(rows)
     #
-    # total_heap_blks_hit = sum(int(r['heap_blks_hit'] or 0) for r in pg_statio_user_tables)
-    # total_heap_blks_read = sum(int(r['heap_blks_read'] or 0) for r in pg_statio_user_tables)
-    # total_idx_blks_hit = sum(int(r['idx_blks_hit'] or 0) for r in pg_statio_user_tables)
-    # total_idx_blks_read = sum(int(r['idx_blks_read'] or 0) for r in pg_statio_user_tables)
-    # total_tidx_blks_hit = sum(int(r['tidx_blks_hit'] or 0) for r in pg_statio_user_tables)
-    # total_tidx_blks_read = sum(int(r['tidx_blks_read'] or 0) for r in pg_statio_user_tables)
-    # total_toast_blks_hit = sum(int(r['toast_blks_hit'] or 0) for r in pg_statio_user_tables)
-    # total_toast_blks_read = sum(int(r['toast_blks_read'] or 0) for r in pg_statio_user_tables)
+    # print(df)
+    # print(df.dtypes)
     #
-    #
-    # print(f'heap hit: {total_heap_blks_hit:,}, heap read: {total_heap_blks_read:,}')
-    # print(f'idx hit: {total_idx_blks_hit:,}, idx read: {total_idx_blks_read:,}')
-    # print(f'tidx hit: {total_tidx_blks_hit}, tidx read: {total_tidx_blks_read}')
-    # print(f'toast hit: {total_toast_blks_hit}, toast read: {total_toast_blks_read}')
-    #
-    # lineitem_heap_blks_hit = sum(int(r['heap_blks_hit'] or 0) for r in pg_statio_user_tables if r['relname'] == 'lineitem')
-    # lineitem_heap_blks_read = sum(int(r['heap_blks_read'] or 0) for r in pg_statio_user_tables if r['relname'] == 'lineitem')
-    # lineitem_idx_blks_hit = sum(int(r['idx_blks_hit'] or 0) for r in pg_statio_user_tables if r['relname'] == 'lineitem')
-    # lineitem_idx_blks_read = sum(int(r['idx_blks_read'] or 0) for r in pg_statio_user_tables if r['relname'] == 'lineitem')
-    #
-    # print(f'lineitem heap hit: {lineitem_heap_blks_hit:,}, lineitem heap read: {lineitem_heap_blks_read:,}')
-    # print(f'lineitem idx hit: {lineitem_idx_blks_hit:,}, lineitem idx read: {lineitem_idx_blks_read:,}')
-    # heap_hit_rate = total_heap_blks_hit / (total_heap_blks_hit + total_heap_blks_read)
-    # linitem_hit_rate = lineitem_heap_blks_hit / (lineitem_heap_blks_hit + lineitem_heap_blks_read)
-    #
-    # print(f'total: {heap_hit_rate}, lineitem: {linitem_hit_rate}')
+    # r = next(r for r in rows if 'parallelism' in r)
+    # print(r)
+    # p = r['parallelism']
+    # print(p, type(p))
 
+    # df.to_excel()
 
-    # TODO:
-    # move this summing into a function or something and add it to the CSV for each experiment.
-
-
-    # metrics_encoded = json.JSONEncoder(indent=2).encode(pg_statio_user_tables)
-    # print(metrics_encoded)
-
-
-# TODO: crawl the results directory and create a csv row for each... put interesting data in a CSV file.
+    # TODO consider using pandas to write the CSV, get more columns for free that way...
