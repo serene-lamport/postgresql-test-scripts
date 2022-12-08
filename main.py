@@ -99,7 +99,8 @@ LAST_CONFIG_FILE = 'last_config.json'
 # Used to determine the 'pages per range' of BRIN indexes. We want to adjust this depending on the block size to have
 # the same number of *rows* per range. (approximately - blocks are padded slightly if not exactly a multiple of the row
 # size) This value is divided by the block size (in kB), so it should be a common multiple of all block sizes.
-BASE_PAGES_PER_RANGE = 128 * 8  # note: 128 is the default 'blocks_per_range' and 8 (kB) is default block size.
+# use 256 KiB so it matches the smallest block group size we're using
+BASE_PAGES_PER_RANGE = 32 * 8  # note: 128 is the default 'blocks_per_range' and 8 (kB) is default block size.
 
 ##########
 #  CODE  #
@@ -512,12 +513,12 @@ def create_and_populate_local_db(case: DbConfig):
         pg_stop_db(cl)
 
 
-def create_indexes(conn: PgConnection, index_dir: str, sf: int):
+def create_indexes(conn: PgConnection, index_dir: str, blk_sz: int):
     if index_dir is None:
         return
     with open(f'ddl/index/{index_dir}/create.sql', 'r') as f:
         lines = f.readlines()
-    stmts = ''.join(lines).replace('REPLACEME_BRIN_PAGES_PER_RANGE', str(BASE_PAGES_PER_RANGE / sf))
+    stmts = ''.join(lines).replace('REPLACEME_BRIN_PAGES_PER_RANGE', str(BASE_PAGES_PER_RANGE / blk_sz))
     conn.execute(stmts)
 
 
@@ -554,7 +555,7 @@ def rename_bbase_results(root: Path):
         os.rename(root / src, root / dst)
 
 
-def reconfigure_indexes(pgconn: PgConnection, sf: int, prev_indexes: str, new_indexes: str):
+def reconfigure_indexes(pgconn: PgConnection, blk_sz: int, prev_indexes: str, new_indexes: str):
     # check if the indexes didn't change
     if prev_indexes == new_indexes:
         print(f'Using the same indexes as previously ({prev_indexes}), skipping...')
@@ -565,7 +566,7 @@ def reconfigure_indexes(pgconn: PgConnection, sf: int, prev_indexes: str, new_in
     drop_indexes(pgconn, prev_indexes)
 
     print(f'create indexes: {new_indexes}')
-    create_indexes(pgconn, new_indexes, sf)
+    create_indexes(pgconn, new_indexes, blk_sz)
 
 
 def reconfigure_clustering(pgconn: PgConnection, prev_cluster: str, new_cluster: str):
@@ -606,7 +607,7 @@ def setup_indexes_cluster(blk_sz: int, sf: int, *, prev_indexes: str, new_indexe
 
         try:
             with pg.open(f'pq://{PG_HOST}/TPCH_{args.sf}') as pgconn:
-                reconfigure_indexes(pgconn, args.sf, prev_indexes=prev_indexes, new_indexes=new_indexes)
+                reconfigure_indexes(pgconn, blk_sz, prev_indexes=prev_indexes, new_indexes=new_indexes)
                 reconfigure_clustering(pgconn, prev_cluster=prev_cluster, new_cluster=new_cluster or prev_cluster)
 
                 ret = read_constraints_indexes(pgconn)
