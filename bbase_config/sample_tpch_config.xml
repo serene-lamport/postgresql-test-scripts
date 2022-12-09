@@ -8,8 +8,10 @@
     <username>admin</username>
     <password>password</password>
     <isolation>TRANSACTION_SERIALIZABLE</isolation>
-    <!--Batch size used for loading data only (# of inserts per transaction). 100k seems to be where loading time plateaus, 1k was way too small-->
+    <!-- Batch size used for loading data only (# of inserts per transaction). 100k seems to be where loading time plateaus, 1k was way too small -->
     <batchsize>100000</batchsize>
+    <!-- Fixed seed for consistency -->
+    <randomSeed>12345</randomSeed>>
 
     <!-- Control scale factor to generate different amount of data -->
     <scalefactor>0.1</scalefactor>
@@ -18,7 +20,6 @@
     <terminals>1</terminals>
     <works>
         <work>
-            <!-- TODO what are these fields? -->
             <serial>false</serial>
             <rate>unlimited</rate>
             <weights>1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0</weights>

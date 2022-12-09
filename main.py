@@ -106,10 +106,22 @@ BASE_PAGES_PER_RANGE = 32 * 8  # note: 128 is the default 'blocks_per_range' and
 #  CODE  #
 ##########
 
+# If using weights:
+# - set <weights>.text = ...
+# - set <time> = BBASE_TIME
+
+# If using counts:
+# - set <counts>.text = ... (but scaled accordingly)
+# - don't set <time>
 
 workload_weights = {
-    'tpch': '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0',
-    'micro': '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1',
+    'tpch_w': {'weights': '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0', 'time': BBASE_TIME},
+    'micro_w': {'weights': '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1', 'time': BBASE_TIME},
+# }
+#
+# workload_counts = {
+    'tpch_c': {'counts': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0],},
+    'micro_c': {'counts': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],},
 }
 
 # Information about the database is configured: branch/code being used, block size, and scale factor
@@ -402,6 +414,7 @@ def create_bbase_config(sf, bb_config: BBaseConfig, out, local=False):
     params.find('password').text = PG_PASSWD
     params.find('scalefactor').text = str(sf)
     params.find('terminals').text = str(bb_config.nworkers)
+    params.find('randomSeed').text = '12345'
 
     works = params.find('works')
 
@@ -411,11 +424,11 @@ def create_bbase_config(sf, bb_config: BBaseConfig, out, local=False):
 
     work = ET.SubElement(works, 'work')
     ET.SubElement(work, 'serial').text = 'false'
-    ET.SubElement(work, 'rate').text = 'unlimited'  # Rate is in queries per second (?)
-    ET.SubElement(work, 'weights').text = bb_config.workload
+    ET.SubElement(work, 'rate').text = 'unlimited'
     ET.SubElement(work, 'arrival').text = 'regular'
-    ET.SubElement(work, 'time').text = str(BBASE_TIME)  # Time to run the benchmark in seconds (?)
     # ET.SubElement(work, 'warmup').text = '0'
+    for k, v in bb_config.workload.items():
+        ET.SubElement(work, k).text = str(v)
 
     tree.write(out)
 
@@ -801,6 +814,12 @@ def run_benchmarks(args):
         raise Exception(f'Unknown workload type {args.workload}')
     weights = workload_weights[args.workload]
 
+    use_counts = False
+    if 'counts' in weights:
+        use_counts = True
+        mult = args.count_multiplier
+        weights = {'counts': ','.join([str(c * mult) for c in weights['counts']])}
+
     pgconf = RuntimePgConfig(
         shared_buffers=args.shmem,
         synchronize_seqscans='on' if args.syncscans else 'off',
@@ -832,13 +851,16 @@ def run_benchmarks(args):
             'clustering': test_cluster,
             'indexes': test_indexes,
             'scalefactor': args.sf,
-            'time': BBASE_TIME,
             'parallelism': args.parallelism,
             'workload': args.workload,
             'block_group_size': args.bg_sz,
             'work_mem': PG_WORK_MEM,
             **pgconf._asdict(),
         }
+        if use_counts:
+            config['count_multiplier'] = args.count_multiplier
+        else:
+            config['time'] = weights['time']
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(config))
         f.write('\n')  # ensure trailing newline
 
@@ -865,16 +887,11 @@ def run_benchmarks(args):
                                                  prev_indexes=prev_indexes, new_indexes=test_indexes,
                                                  prev_cluster=prev_cluster, new_cluster=test_cluster)
 
-
-
     with open(results_dir / CONSTRAINTS_FILE, 'w') as f:
         constraints.to_csv(f, index=False)
 
     with open(results_dir / INDEXES_FILE, 'w') as f:
         indexes.to_csv(f, index=False)
-
-
-
 
     print(f'~~~~~~~~~~ Index and clustering setup done! Running the real tests... ~~~~~~~~~~')
 
@@ -900,7 +917,8 @@ MAIN_HELP_TEXT = """Action to perform. Actions are:
     pg_update:          update git repo and rebuild postgres for each test configuration
     pg_clean:           `make clean` for PBM installations
     pg_clean+base:      `make clean` for PBM installations AND the default installation
-    benchbase_setup:    install benchbase on current host
+    bbase_setup:        install benchbase on current host
+    bbase_reinstall:    unpack benchbase into the install directory without rebuilding it
     gen_test_data:      load test data for the given scale factor for all test configurations
     drop_indexes:       used to remove and indexes and constraints for given scale factor
     reindex:            set the indexes clustering without running benchmarks
@@ -921,7 +939,8 @@ if __name__ == '__main__':
         'pg_update',
         'pg_clean',
         'pg_clean+base',
-        'benchbase_setup',
+        'bbase_setup',
+        'bbase_reinstall',
         'gen_test_data',
         'drop_indexes',
         'reindex',
@@ -947,6 +966,8 @@ if __name__ == '__main__':
                         help='Disable syncronized scans')
     parser.add_argument('-e', '--experiment', type=str, default=None, dest='experiment',
                         help='Experiment name to help identify test results')
+    parser.add_argument('-cm', '--count-multiplier', type=int, default=8, dest='count_multiplier',
+                        help='If using a count workload, the amount to multiply the counts by')
     args = parser.parse_args()
 
     if args.action == 'pg_setup':
@@ -961,8 +982,11 @@ if __name__ == '__main__':
     elif args.action == 'pg_clean+base':
         clean_pg_installs(base=True)
 
-    elif args.action == 'benchbase_setup':
+    elif args.action == 'bbase_setup':
         one_time_benchbase_setup()
+
+    elif args.action == 'bbase_reinstall':
+        install_benchbase()
 
     elif args.action == 'gen_test_data':
         gen_test_data(args.sf, blk_sz=args.blk_sz)

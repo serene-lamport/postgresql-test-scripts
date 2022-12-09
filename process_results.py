@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -i
 
 from pathlib import Path
 import os
@@ -6,6 +6,7 @@ import json
 import csv
 from typing import Optional
 import pandas as pd
+import matplotlib.pyplot as plt
 
 
 ###################
@@ -56,6 +57,7 @@ csv_cols = [
     *statio_main_cols,
     *('lineitem_' + col for col in statio_main_cols),
     'hit_rate', 'lineitem_hit_rate',
+    'data_read_gb', 'data_processed_gb'
 ]
 
 
@@ -79,7 +81,7 @@ def read_config(config_dir) -> Optional[dict]:
         return None
 
 
-def io_metrics_map(metrics: dict) -> dict:
+def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
     """Parse the `metrics.json` json file produced by benchbase and extract io metrics."""
     pg_statio_user_tables = metrics['pg_statio_user_tables']
 
@@ -106,6 +108,8 @@ def io_metrics_map(metrics: dict) -> dict:
 
     metrics_totals['hit_rate'] = total_hits / (total_hits + total_reads)
     metrics_totals['lineitem_hit_rate'] = lineitem_total_hits / (lineitem_total_hits + lineitem_total_reads)
+    metrics_totals['data_read_gb'] = total_reads * blk_sz / (2**30)
+    metrics_totals['data_processed_gb'] = (total_reads + total_hits) * blk_sz / (2**30)
 
     return metrics_totals
 
@@ -151,7 +155,7 @@ if __name__ == '__main__':
                 with open(subdir / 'summary.json', 'r') as summary_file:
                     summary = json_decode(summary_file.read())
 
-                io_metrics = io_metrics_map(metrics)
+                io_metrics = io_metrics_map(metrics, blk_sz)
 
                 # generate row in the processed results:
                 row = {
@@ -172,16 +176,15 @@ if __name__ == '__main__':
             print(f'ERROR: could not find the benchbase files for {conf_dir}!')
             print(f'    {e!r}')
 
-    # df = pd.DataFrame(rows)
-    #
-    # print(df)
-    # print(df.dtypes)
-    #
-    # r = next(r for r in rows if 'parallelism' in r)
-    # print(r)
-    # p = r['parallelism']
-    # print(p, type(p))
+    df = pd.DataFrame(rows)
 
-    # df.to_excel()
+    print('================================================================================')
+    print('== Post-process interactive prompt:')
+    print('==   `df` contains a dataframe of the results')
+    print('==   `plt` is `matplotlib.pyplot`')
+    print('================================================================================')
+    cols = '\n\t'.join(df.columns)
+    print(f'Results columns:\n\t{cols}')
+
 
     # TODO consider using pandas to write the CSV, get more columns for free that way...
