@@ -48,12 +48,13 @@ csv_cols = [
     'experiment', 'dir', 'branch', 'block size',
     # configuration from configuration json file
     'block_group_size', 'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'work_mem',
-    'synchronize_seqscans', 'parallelism', 'time',
+    'synchronize_seqscans', 'parallelism', 'time', 'count_multiplier',
     # from benchbase summary:
-    'Throughput (requests/second)', 'Goodput (requests/second)',
+    'Throughput (requests/second)', 'Goodput (requests/second)', 'Benchmark Runtime (nanoseconds)',
     # latency from benchbase summary:
     *bbase_latency_cols,
     # stats from metrics
+    'average_stream_s',
     *statio_main_cols,
     *('lineitem_' + col for col in statio_main_cols),
     'hit_rate', 'lineitem_hit_rate',
@@ -154,6 +155,11 @@ if __name__ == '__main__':
                     metrics = json_decode(metrics_file.read())
                 with open(subdir / 'summary.json', 'r') as summary_file:
                     summary = json_decode(summary_file.read())
+                try:
+                    with open(subdir / 'stream_times.json', 'r') as st_file:
+                        stream_times = json_decode(st_file.read())
+                except FileNotFoundError:
+                    stream_times = []
 
                 io_metrics = io_metrics_map(metrics, blk_sz)
 
@@ -162,6 +168,8 @@ if __name__ == '__main__':
                     'dir': conf_dir,
                     'branch': brnch,
                     'block size': blk_sz,
+                    # compute average stream time (stream times are microseconds)
+                    'average_stream_s': sum(stream_times) / len(stream_times) / (10**6) if stream_times else None,
                     **config,
                     **summary,
                     **summary['Latency Distribution'],
