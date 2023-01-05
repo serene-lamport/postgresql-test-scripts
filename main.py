@@ -7,6 +7,7 @@ import git
 import shutil
 import subprocess
 from datetime import datetime as dt
+import time
 from pathlib import Path
 import postgresql as pg
 from git import GitCommandError
@@ -70,7 +71,11 @@ POSTGRES_BASE_BRANCH = 'REL_14_STABLE'
 POSTGRES_PBM_BRANCHES = {
     # key = friendly name in folder paths
     # value = git branch name
-    'pbm1': 'pbm_part1'
+
+    'pbm1': 'pbm_part1',
+
+    # TEMP: for comparing changes in my own code...
+    # 'pbm_old': 'pbm_old',
 }
 
 # Derived configuration: paths and branch mappings
@@ -115,12 +120,11 @@ BASE_PAGES_PER_RANGE = 32 * 8  # note: 128 is the default 'blocks_per_range' and
 # - don't set <time>
 
 workload_weights = {
-    'tpch_w': {'weights': '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0', 'time': BBASE_TIME},
+    'tpch_w': {'weights': '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0', 'time': BBASE_TIME},
+    # 'tpch_w': {'weights': '1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0', 'time': BBASE_TIME},
     'micro_w': {'weights': '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1', 'time': BBASE_TIME},
-# }
-#
-# workload_counts = {
-    'tpch_c': {'counts': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0],},
+    'tpch_c': {'counts': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0],},
+    # 'tpch_c': {'counts': [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0],},
     'micro_c': {'counts': [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1],},
 }
 
@@ -204,13 +208,26 @@ class GitProgressBar(git.RemoteProgress):
 
 def clone_pg_repos():
     """Clone PostgreSQL repository, including creating worktrees for each postgres branch."""
-    with GitProgressBar("PostgreSQL") as pbar:
-        pg_repo = git.Repo.clone_from(POSTGRES_GIT_URL, POSTGRES_SRC_PATH_BASE, progress=pbar, multi_options=[f'--branch {POSTGRES_BASE_BRANCH}'])
+    try:
+        with GitProgressBar("PostgreSQL") as pbar:
+            pg_repo = git.Repo.clone_from(POSTGRES_GIT_URL, POSTGRES_SRC_PATH_BASE, progress=pbar, multi_options=[f'--branch {POSTGRES_BASE_BRANCH}'])
+    except GitCommandError as e:
+        print(f'WARNING: got git error while cloning main repo: {e}')
+        print(f'    Assuming the repo is already cloned. Update it instead')
+
+        pg_repo = git.Repo(POSTGRES_SRC_PATH_BASE)
+        with GitProgressBar("PostgreSQL") as pbar:
+            pg_repo.remote().pull(progress=pbar)
+
     print('Creating worktrees for other PostgreSQL branches')
     pbm_repos = []
     for folder, branch in POSTGRES_PBM_BRANCHES.items():
         abs_dir = POSTGRES_SRC_PATH / folder
-        pg_repo.git.worktree('add', abs_dir, branch)
+        try:
+            pg_repo.git.worktree('add', abs_dir, branch)
+        except GitCommandError as e:
+            print(f'WARNING: got git error while creating worktree for {branch}: {e}')
+            print(f'    Assuming the worktree already exists and continuing...')
         pbm_repos.append(git.Repo(abs_dir))
 
 
@@ -286,6 +303,18 @@ def config_postgres_repo(brnch: str, blk_sz: int, bg_size: int):
     subprocess.Popen(config_args, cwd=build_path).wait()
 
 
+def build_postgres_extension(build_path: Path, extension: str):
+    """Compile the given extension for the specified build path"""
+    ext_build_path = build_path / 'contrib' / extension
+    print(f'Compiling and installing extension {extension}')
+    ret = subprocess.Popen('make', cwd=ext_build_path).wait()
+    if ret != 0:
+        raise Exception(f'Got return code {ret} when compiling extension {extension}')
+    ret = subprocess.Popen(['make', 'install'], cwd=build_path).wait()
+    if ret != 0:
+        raise Exception(f'Got return code {ret} when installing extension {extension}')
+
+
 def build_postgres(brnch: str, blk_sz: int, bg_size: int):
     """Compiles PostgreSQL for the specified branch/block size."""
     build_path = get_build_path(brnch, blk_sz, bg_size)
@@ -296,6 +325,10 @@ def build_postgres(brnch: str, blk_sz: int, bg_size: int):
     ret = subprocess.Popen(['make', 'install'], cwd=build_path).wait()
     if ret != 0:
         raise Exception(f'Got return code {ret} when installing postgres {brnch} with block size={blk_sz}, group size={bg_size}')
+
+    # compile desired extensions...
+    for ext in ['pg_prewarm']:
+        build_postgres_extension(build_path, ext)
 
 
 def clean_postgres(brnch: str, blk_sz: int, bg_size):
@@ -405,6 +438,23 @@ def stop_remote_postgres(conn: fabric.Connection, case: DbConfig):
     conn.run(f'{pgctl} stop -D {data_dir}')
 
 
+def prewarm_lineitem(case: DbConfig):
+    """Prewarm lineitem cache for the given database config (DB must be running)"""
+    conn_str = f'pq://{PG_HOST}/TPCH_{case.sf}'
+    with pg.open(conn_str) as conn:
+        conn: PgConnection
+        conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
+        conn.execute('''select pg_prewarm('lineitem');''')
+
+
+def clear_pg_stats(case: DbConfig):
+    """Clear IO statistics for the given database config (DB must be running))"""
+    conn_str = f'pq://{PG_HOST}/TPCH_{case.sf}'
+    with pg.open(conn_str) as conn:
+        conn: PgConnection
+        conn.execute('SELECT pg_stat_reset();')
+
+
 def create_bbase_config(sf, bb_config: BBaseConfig, out, local=False):
     """Set connection information and scale factor in a BenchBase config file."""
     tree = ET.parse('bbase_config/sample_tpch_config.xml')
@@ -457,6 +507,13 @@ def run_bbase_test(dbconf: DbConfig, bbconf: BBaseConfig, pgconf: RuntimePgConfi
         start_remote_postgres(conn, dbconf)
 
     try:
+
+        # TODO prewarm_lineitem(dbconf) if we configure to prewarm...
+
+        # Clear statistics on remote postgres
+        clear_pg_stats(dbconf)
+
+        # Run benchbase
         subprocess.Popen([
             'java',
             '-jar', str(BENCHBASE_INSTALL_PATH / 'benchbase-postgres' / 'benchbase.jar'),
@@ -640,11 +697,7 @@ def one_time_pg_setup():
     """
 
     print('Cloning PostreSQL repo & worktrees...')
-    try:
-        clone_pg_repos()
-    except GitCommandError as e:
-        print(f'WARNING: got git error: {e}')
-        print(f'    Assuming the repos are already cloned and continuing...')
+    clone_pg_repos()
 
     # Compile postgres for each different version
 
@@ -837,10 +890,18 @@ def run_benchmarks(args):
     prev_cluster = cur_setup.cluster
 
     # create test dir
-    ts = dt.now()
-    ts_str = ts.strftime('%Y-%m-%d_%H-%M')
-    results_dir = RESULTS_ROOT / f'TPCH_{ts_str}'
-    os.mkdir(results_dir)
+    while True:
+        ts = dt.now()
+        ts_str = ts.strftime('%Y-%m-%d_%H-%M')
+        results_dir = RESULTS_ROOT / f'TPCH_{ts_str}'
+        try:
+            os.mkdir(results_dir)
+        except FileExistsError:
+            # if the file already exists, wait and try again with new timestamp
+            print(f'Error: trying to save results to {results_dir} but it already exists! retrying...')
+            time.sleep(30)
+        else:
+            break
 
     # store script config in test dir
     test_cluster = args.cluster or prev_cluster
@@ -873,7 +934,7 @@ def run_benchmarks(args):
     print(f'==   Workload:              {args.workload}     (weights: {weights})')
     print(f'==   Shared memory:         {args.shmem}')
     print(f'==   Worker memory          {PG_WORK_MEM}')
-    print(f'==   Index definitions:     ddl/index/{test_indexes}/   (args.index_type)')
+    print(f'==   Index definitions:     ddl/index/{test_indexes}/   ({args.index_type})')
     print(f'==   Clustering:            dd/cluster/{test_cluster}.sql  ({args.cluster})')
     print(f'==   Terminals:             {args.parallelism}')
     print(f'==   SyncScans:             {pgconf.synchronize_seqscans}')
@@ -896,7 +957,7 @@ def run_benchmarks(args):
     print(f'~~~~~~~~~~ Index and clustering setup done! Running the real tests... ~~~~~~~~~~')
 
     # Actually run the tests
-    for brnch in POSTGRES_ALL_BRANCHES.keys():
+    for brnch in ['base', *POSTGRES_PBM_BRANCHES.keys()]:
         print('--------------------------------------------------------------------------------')
         print(f'---- Running experiments for branch={brnch}, blk_sz={args.blk_sz}, bg_size={args.bg_sz}, sf={args.sf}')
         print('--------------------------------------------------------------------------------')
@@ -966,7 +1027,7 @@ if __name__ == '__main__':
                         help='Disable syncronized scans')
     parser.add_argument('-e', '--experiment', type=str, default=None, dest='experiment',
                         help='Experiment name to help identify test results')
-    parser.add_argument('-cm', '--count-multiplier', type=int, default=8, dest='count_multiplier',
+    parser.add_argument('-cm', '--count-multiplier', type=int, default=4, dest='count_multiplier',
                         help='If using a count workload, the amount to multiply the counts by')
     args = parser.parse_args()
 

@@ -109,8 +109,10 @@ def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
 
     metrics_totals['hit_rate'] = total_hits / (total_hits + total_reads)
     metrics_totals['lineitem_hit_rate'] = lineitem_total_hits / (lineitem_total_hits + lineitem_total_reads)
-    metrics_totals['data_read_gb'] = total_reads * blk_sz / (2**30)
-    metrics_totals['data_processed_gb'] = (total_reads + total_hits) * blk_sz / (2**30)
+    # Compute amount of data read/processed
+    # blk_sz is in KiB, not bytes, so conversion rate is 2^20 to get to GiB
+    metrics_totals['data_read_gb'] = total_reads * blk_sz / (2**20)
+    metrics_totals['data_processed_gb'] = (total_reads + total_hits) * blk_sz / (2**20)
 
     return metrics_totals
 
@@ -184,6 +186,8 @@ if __name__ == '__main__':
             print(f'ERROR: could not find the benchbase files for {conf_dir}!')
             print(f'    {e!r}')
 
+    out.close()
+
     df = pd.DataFrame(rows)
 
     print('================================================================================')
@@ -196,3 +200,9 @@ if __name__ == '__main__':
 
 
     # TODO consider using pandas to write the CSV, get more columns for free that way...
+
+
+    # TODO do some nice graphing...
+
+    import matplotlib
+    matplotlib.use('TkAgg')
