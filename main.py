@@ -132,7 +132,7 @@ workload_weights = {
 # These are used to decide which binaries to use (brnch, blk_sz, bg_sz) and which database clster to start (blk_sz, sf)
 DbConfig = namedtuple('DbConfig', ['brnch', 'blk_sz', 'bg_sz', 'sf'])
 # Information about how to configure benchbase for the test
-BBaseConfig = namedtuple('BBaseConfig', ['nworkers', 'results_dir', 'workload'])
+BBaseConfig = namedtuple('BBaseConfig', ['nworkers', 'results_dir', 'workload', 'prewarm'])
 # PostgreSQL configuration
 
 # PostgreSQL configuration for the test that isn't relevant for which binary to use (branch and block size) or which
@@ -310,7 +310,7 @@ def build_postgres_extension(build_path: Path, extension: str):
     ret = subprocess.Popen('make', cwd=ext_build_path).wait()
     if ret != 0:
         raise Exception(f'Got return code {ret} when compiling extension {extension}')
-    ret = subprocess.Popen(['make', 'install'], cwd=build_path).wait()
+    ret = subprocess.Popen(['make', 'install'], cwd=ext_build_path).wait()
     if ret != 0:
         raise Exception(f'Got return code {ret} when installing extension {extension}')
 
@@ -507,8 +507,10 @@ def run_bbase_test(dbconf: DbConfig, bbconf: BBaseConfig, pgconf: RuntimePgConfi
         start_remote_postgres(conn, dbconf)
 
     try:
-
-        # TODO prewarm_lineitem(dbconf) if we configure to prewarm...
+        # prewarm lineitem table if desired
+        if args.prewarm:
+            print(f'Pre-warming cache for lineitem table...')
+            prewarm_lineitem(dbconf)
 
         # Clear statistics on remote postgres
         clear_pg_stats(dbconf)
@@ -562,7 +564,7 @@ def create_and_populate_local_db(case: DbConfig):
 
         print(f'BenchBase: loading test data...')
         bbase_config_file = BUILD_ROOT / 'load_config.xml'
-        create_bbase_config(case.sf, BBaseConfig(nworkers=1, results_dir=None, workload=''), bbase_config_file, local=True)
+        create_bbase_config(case.sf, BBaseConfig(nworkers=1, results_dir=None, workload=workload_weights['tpch_w'], prewarm=False), bbase_config_file, local=True)
         run_bbase_load(bbase_config_file)
 
         # Re-enable vacuum after loading is complete
@@ -916,6 +918,7 @@ def run_benchmarks(args):
             'workload': args.workload,
             'block_group_size': args.bg_sz,
             'work_mem': PG_WORK_MEM,
+            'prewarm': args.prewarm,
             **pgconf._asdict(),
         }
         if use_counts:
@@ -938,6 +941,7 @@ def run_benchmarks(args):
     print(f'==   Clustering:            dd/cluster/{test_cluster}.sql  ({args.cluster})')
     print(f'==   Terminals:             {args.parallelism}')
     print(f'==   SyncScans:             {pgconf.synchronize_seqscans}')
+    print(f'==   Prewarm:               {args.prewarm}')
     print(f'== Storing results to {results_dir}')
     print(f'======================================================================')
 
@@ -964,8 +968,8 @@ def run_benchmarks(args):
 
         dbconf = DbConfig(brnch, args.blk_sz, args.bg_sz, sf=args.sf)
         results_subdir = results_dir / f'{brnch}_blksz{args.blk_sz}'
-
-        run_bbase_test(dbconf, BBaseConfig(nworkers=args.parallelism, results_dir=results_subdir, workload=weights), pgconf)
+        bbconf = BBaseConfig(nworkers=args.parallelism, results_dir=results_subdir, workload=weights, prewarm=args.prewarm)
+        run_bbase_test(dbconf, bbconf, pgconf)
         rename_bbase_results(results_subdir)
 
 
@@ -1025,6 +1029,7 @@ if __name__ == '__main__':
                         help='Number of terminals (parallel query streams) in BenchBase')
     parser.add_argument('--disable-syncscans', action='store_false', dest='syncscans',
                         help='Disable syncronized scans')
+    parser.add_argument('--disable-prewarm', action='store_false', dest='prewarm', help='Disable prewarming')
     parser.add_argument('-e', '--experiment', type=str, default=None, dest='experiment',
                         help='Experiment name to help identify test results')
     parser.add_argument('-cm', '--count-multiplier', type=int, default=4, dest='count_multiplier',
@@ -1076,7 +1081,6 @@ if __name__ == '__main__':
 
                 with pg.open(f'pq://{PG_HOST}/TPCH_1') as pgconn:
                     pgconn: PgConnection
-                    constraints, indexes = read_constraints_indexes(pgconn)
 
             finally:
                 stop_remote_postgres(fabconn, dbconf)

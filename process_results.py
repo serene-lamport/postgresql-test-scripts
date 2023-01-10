@@ -7,6 +7,7 @@ import csv
 from typing import Optional
 import pandas as pd
 import matplotlib.pyplot as plt
+from typing import List, Union
 
 
 ###################
@@ -48,7 +49,7 @@ csv_cols = [
     'experiment', 'dir', 'branch', 'block size',
     # configuration from configuration json file
     'block_group_size', 'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'work_mem',
-    'synchronize_seqscans', 'parallelism', 'time', 'count_multiplier',
+    'synchronize_seqscans', 'parallelism', 'time', 'count_multiplier', 'prewarm',
     # from benchbase summary:
     'Throughput (requests/second)', 'Goodput (requests/second)', 'Benchmark Runtime (nanoseconds)',
     # latency from benchbase summary:
@@ -115,6 +116,55 @@ def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
     metrics_totals['data_processed_gb'] = (total_reads + total_hits) * blk_sz / (2**20)
 
     return metrics_totals
+
+
+def to_mb(ms: str):
+    """Convert memory size in postgres config format to # of MB"""
+    units = ms[-2:].lower()
+
+    num = float(ms[:-2]) * {
+        'mb': 2**0,
+        'gb': 2**10,
+    }[units]
+
+    return int(num)
+
+
+def plot_exp(df: pd.DataFrame, exp: str,
+             x, xsort=None, xlabels=None, logx=False, xlabel=None,
+             y='hit_rate',  ybound=None, ylabel=None,
+             group: Union[str, List[str]] = 'branch',
+             title='plot'):
+    """Plot an experiment."""
+    df_exp = df[df['experiment'] == exp]
+
+    f, ax = plt.subplots()
+
+    for grp, df_plot in df_exp.groupby(group):
+        if type(xsort) == bool and xsort:
+            xsort = x
+        if xsort is not None and xsort is not False:
+            df_plot = df_plot.sort_values(by=xsort)
+
+        if logx:
+            plotfn = lambda *a, **kwa: ax.semilogx(*a, base=2, **kwa)
+        else:
+            plotfn = ax.plot
+
+        plotfn(df_plot[x], df_plot[y], label=str(grp))
+
+    ax.minorticks_off()
+    if ybound is not None:
+        ax.set_ybound(*ybound)
+    if xlabels is not None:
+        ax.set_xticks(df_plot[x], labels=df_plot[xlabels])
+
+    ax.set_xlabel(xlabel or str(x))
+    ax.set_ylabel(ylabel or y)
+    ax.legend()
+    ax.set_title(str(title))
+
+    return f, ax
 
 
 if __name__ == '__main__':
@@ -195,14 +245,23 @@ if __name__ == '__main__':
     print('==   `df` contains a dataframe of the results')
     print('==   `plt` is `matplotlib.pyplot`')
     print('================================================================================')
-    cols = '\n\t'.join(df.columns)
-    print(f'Results columns:\n\t{cols}')
 
-
-    # TODO consider using pandas to write the CSV, get more columns for free that way...
-
-
-    # TODO do some nice graphing...
-
+    # Plot things
     import matplotlib
     matplotlib.use('TkAgg')
+
+    # Convert shared buffers config to numbers for plotting
+    df['shmem_mb'] = df['shared_buffers'].map(to_mb)
+
+    # plot some experiments
+    f, ax = plot_exp(df, 'test_reset_stats_shmem',
+                     x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+                     y='hit_rate', ylabel='hit rate', ybound=(0,1),
+                     title='test')
+    f, ax = plot_exp(df, 'test_shmem_prewarm_2', group=['branch', 'prewarm'],
+                     x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+                     y='hit_rate', ylabel='hit rate', ybound=(0,1),
+                     title='test')
+
+
+    plt.show()
