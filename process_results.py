@@ -7,7 +7,7 @@ import csv
 from typing import Optional
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import List, Union
+from typing import List, Union, Iterable
 
 
 ###################
@@ -130,10 +130,17 @@ def to_mb(ms: str):
     return int(num)
 
 
+def format_str_or_iterable(to_fmt: Union[str, Iterable[str]]) -> str:
+    if type(to_fmt) == str:
+        return to_fmt
+
+    return ', '.join(str(s) for s in to_fmt)
+
+
 def plot_exp(df: pd.DataFrame, exp: str,
              x, xsort=None, xlabels=None, logx=False, xlabel=None,
              y='hit_rate',  ybound=None, ylabel=None,
-             group: Union[str, List[str]] = 'branch',
+             group: Union[str, Iterable[str]] = 'branch',
              title='plot'):
     """Plot an experiment."""
     df_exp = df[df['experiment'] == exp]
@@ -151,7 +158,7 @@ def plot_exp(df: pd.DataFrame, exp: str,
         else:
             plotfn = ax.plot
 
-        plotfn(df_plot[x], df_plot[y], label=str(grp))
+        plotfn(df_plot[x], df_plot[y], label=format_str_or_iterable(grp))
 
     ax.minorticks_off()
     if ybound is not None:
@@ -161,7 +168,7 @@ def plot_exp(df: pd.DataFrame, exp: str,
 
     ax.set_xlabel(xlabel or str(x))
     ax.set_ylabel(ylabel or y)
-    ax.legend()
+    ax.legend(title=format_str_or_iterable(group))
     ax.set_title(str(title))
 
     return f, ax
@@ -257,11 +264,11 @@ if __name__ == '__main__':
     f, ax = plot_exp(df, 'test_reset_stats_shmem',
                      x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
                      y='hit_rate', ylabel='hit rate', ybound=(0,1),
-                     title='test')
+                     title='Hit-rate vs shared buffer size')
     f, ax = plot_exp(df, 'test_shmem_prewarm_2', group=['branch', 'prewarm'],
                      x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
                      y='hit_rate', ylabel='hit rate', ybound=(0,1),
-                     title='test')
+                     title='Hit-rate vs shared buffer size with and without pre-warming')
 
 
     plt.show()
