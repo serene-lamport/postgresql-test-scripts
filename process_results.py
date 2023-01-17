@@ -49,7 +49,7 @@ csv_cols = [
     'experiment', 'dir', 'branch', 'block size',
     # configuration from configuration json file
     'block_group_size', 'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'work_mem',
-    'synchronize_seqscans', 'parallelism', 'time', 'count_multiplier', 'prewarm',
+    'synchronize_seqscans', 'pbm_evict_num_samples', 'parallelism', 'time', 'count_multiplier', 'prewarm',
     # from benchbase summary:
     'Throughput (requests/second)', 'Goodput (requests/second)', 'Benchmark Runtime (nanoseconds)',
     # latency from benchbase summary:
@@ -260,15 +260,21 @@ if __name__ == '__main__':
     # Convert shared buffers config to numbers for plotting
     df['shmem_mb'] = df['shared_buffers'].map(to_mb)
 
-    # plot some experiments
-    f, ax = plot_exp(df, 'test_reset_stats_shmem',
-                     x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-                     y='hit_rate', ylabel='hit rate', ybound=(0,1),
-                     title='Hit-rate vs shared buffer size')
-    f, ax = plot_exp(df, 'test_shmem_prewarm_2', group=['branch', 'prewarm'],
-                     x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-                     y='hit_rate', ylabel='hit rate', ybound=(0,1),
-                     title='Hit-rate vs shared buffer size with and without pre-warming')
-
+    # # plot some experiments
+    # f, ax = plot_exp(df, 'test_reset_stats_shmem',
+    #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+    #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
+    #                  title='Hit-rate vs shared buffer size')
+    # f, ax = plot_exp(df, 'test_shmem_prewarm_2', group=['branch', 'prewarm'],
+    #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+    #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
+    #                  title='Hit-rate vs shared buffer size with and without pre-warming')
+    # f, ax = plot_exp(df, 'test_sf100', group=['branch', 'prewarm'],
+    #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+    #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
+    #                  title='SF 100 Hit-rate vs shared buffer size')
 
     plt.show()
+
+    # TODO consider `seaborn` package for better visualization...
+    # TODO split script into generating results.csv (collect_results?) and processing results.csv (graphing, etc.)
