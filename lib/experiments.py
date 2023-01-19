@@ -48,6 +48,10 @@ BLOCK_GROUP_SIZES = [256, 1024, 4096]
 
 PG_WORK_MEM = '512MB'
 
+# Defaults for parameters with multiple options
+DEFAULT_BLOCK_SIZE = 8
+DEFAULT_BG_SIZE = 256
+
 
 ##########
 #  CODE  #
@@ -108,11 +112,16 @@ class CountedWorkloadConfig(WorkloadConfig):
 
 
 # The available workloads
+WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w',  weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0', time_s=BBASE_TIME)
+WORKLOAD_MICRO_WEIGHTS = WeightedWorkloadConfig('micro_w', weights='0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1', time_s=BBASE_TIME)
+WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c',  counts=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0])
+WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', counts=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1])
+
 WORKLOADS_MAP: Dict[str, WorkloadConfig] = {c.workname: c for c in [
-    WeightedWorkloadConfig('tpch_w',  weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0', time_s=BBASE_TIME),
-    WeightedWorkloadConfig('micro_w', weights='0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1', time_s=BBASE_TIME),
-    CountedWorkloadConfig('tpch_c',  counts=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0]),
-    CountedWorkloadConfig('micro_c', counts=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1]),
+    WORKLOAD_TPCH_WEIGHTS,
+    WORKLOAD_MICRO_WEIGHTS,
+    WORKLOAD_TPCH_COUNTS,
+    WORKLOAD_MICRO_COUNTS,
 ]}
 
 
@@ -138,17 +147,17 @@ class DbConfig:
     and scale factor. These are used to decide which binaries to use (branch, block_size, bg_size)
     and which database cluster to start (block_size, sf).
     """
-    branch: str
+    branch: PgBranch
     sf: int
-    block_size: int
-    bg_size: Optional[int]
+    block_size: int = DEFAULT_BLOCK_SIZE
+    bg_size: int = DEFAULT_BG_SIZE
 
     def to_config_key(self) -> ConfigKey:
         return ConfigKey(sf=self.sf, blk_sz=self.block_size)
 
     def to_config_map(self) -> dict:
         return {
-            'branch': self.branch,
+            'branch': self.branch.name,
             'scalefactor': self.sf,
             'block_size': self.block_size,
             'block_group_size': self.bg_size,
@@ -156,10 +165,10 @@ class DbConfig:
 
     @property
     def builddir(self) -> str:
-        if self.branch == 'base':
-            return f'base_blksz{self.block_size}'
+        if self.branch.is_pbm:
+            return f'{self.branch.name}_blksz{self.block_size}_bgsz{self.bg_size}'
         else:
-            return f'{self.branch}_blksz{self.block_size}_bgsz{self.bg_size}'
+            return f'base_blksz{self.block_size}'
 
     @property
     def build_path(self) -> Path:
@@ -201,7 +210,7 @@ class RuntimePgConfig:
     Some of these are new and only supported for some branches, and should be `None` for the other branches
     """
     shared_buffers: str
-    synchronize_seqscans: str
+    synchronize_seqscans: str = 'on'
     # PBM-only fields:
     # pbm2 and later:
     pbm_evict_num_samples: Optional[int] = None
@@ -264,7 +273,7 @@ class ExperimentConfig:
 
     @property
     def results_bbase_subdir(self) -> Path:
-        return self.results_dir / f'{self.dbconf.branch}_blksz{self.dbconf.block_size}'
+        return self.results_dir / f'{self.dbconf.branch.name}_blksz{self.dbconf.block_size}'
 
 
 def read_last_config() -> DefaultDict[ConfigKey, DbSetup]:
@@ -344,7 +353,8 @@ def clone_pg_repos():
     """Clone PostgreSQL repository, including creating worktrees for each postgres branch."""
     try:
         with GitProgressBar("PostgreSQL") as pbar:
-            pg_repo = git.Repo.clone_from(POSTGRES_GIT_URL, POSTGRES_SRC_PATH_BASE, progress=pbar, multi_options=[f'--branch {POSTGRES_BASE_BRANCH}'])
+            pg_repo = git.Repo.clone_from(POSTGRES_GIT_URL, POSTGRES_SRC_PATH_BASE, progress=pbar,
+                                          multi_options=[f'--branch {BRANCH_POSTGRES_BASE.git_branch}'])
     except GitCommandError as e:
         print(f'WARNING: got git error while cloning main repo: {e}')
         print(f'    Assuming the repo is already cloned. Update it instead')
@@ -355,10 +365,10 @@ def clone_pg_repos():
 
     print('Creating worktrees for other PostgreSQL branches')
     pbm_repos = []
-    for folder, branch in POSTGRES_PBM_BRANCHES.items():
-        abs_dir = POSTGRES_SRC_PATH / folder
+    for branch in POSTGRES_PBM_BRANCHES:
+        abs_dir = POSTGRES_SRC_PATH / branch.name
         try:
-            pg_repo.git.worktree('add', abs_dir, branch)
+            pg_repo.git.worktree('add', abs_dir, branch.git_branch)
         except GitCommandError as e:
             print(f'WARNING: got git error while creating worktree for {branch}: {e}')
             print(f'    Assuming the worktree already exists and continuing...')
@@ -375,27 +385,12 @@ def get_repos():
     """Return the already-cloned repositories created by `clone_repos`."""
     pg_repo = git.Repo(POSTGRES_SRC_PATH_BASE)
     pbm_repos = []
-    for brnch in POSTGRES_PBM_BRANCHES.keys():
-        abs_dir = POSTGRES_SRC_PATH / brnch
+    for brnch in POSTGRES_PBM_BRANCHES:
+        abs_dir = POSTGRES_SRC_PATH / brnch.name
         pbm_repos.append(git.Repo(abs_dir))
     bbase_repo = git.Repo(BENCHBASE_SRC_PATH)
 
     return pg_repo, pbm_repos, bbase_repo
-
-
-def get_pg_builddir(brnch: str, blk_sz: int, bg_sz: int) -> str:
-    if brnch == 'base':
-        return f'base_blksz{blk_sz}'
-    else:
-        return f'{brnch}_blksz{blk_sz}_bgsz{bg_sz}'
-
-
-def get_build_path(brnch: str, blk_sz: int, bg_sz: int) -> Path:
-    return DbConfig(branch=brnch, sf=0, block_size=blk_sz, bg_size=bg_sz).build_path
-
-
-def get_install_path(brnch: str, blk_sz: int, bg_sz: int) -> Path:
-    return DbConfig(branch=brnch, sf=0, block_size=blk_sz, bg_size=bg_sz).install_path
 
 
 def pbm_blk_shift(blk_sz: int, bg_size: int):
@@ -408,27 +403,31 @@ def pbm_blk_shift(blk_sz: int, bg_size: int):
 
 
 # TODO refactor to just take a DbConfig...
-def config_postgres_repo(brnch: str, blk_sz: int, bg_size: int):
+def config_postgres_repo(dbconf: DbConfig):
     """Runs `./configure` to setup the build for postgres with the provided branch and block size."""
-    build_path = get_build_path(brnch, blk_sz, bg_size)
-    install_path = get_install_path(brnch, blk_sz, bg_size)
-    print(f'Configuring postgres {brnch} with block size {blk_sz}, block group size {bg_size}')
+    build_path = dbconf.build_path
+    install_path = dbconf.install_path
+    brnch = dbconf.branch
+    blk_sz = dbconf.block_size
+    bg_size = dbconf.bg_size
+
+    print(f'Configuring postgres {brnch.name} with block size {blk_sz}, block group size {bg_size}')
     build_path.mkdir(exist_ok=True, parents=True)
 
-    if brnch == 'base':
-        version_str = f'--with-extra-version=-{brnch}_blkzs{blk_sz}'
+    if brnch.is_pbm:
+        version_str = f'--with-extra-version=-{brnch.name}_blkzs{blk_sz}_bgsz{bg_size}'
     else:
-        version_str = f'--with-extra-version=-{brnch}_blkzs{blk_sz}_bgsz{bg_size}'
+        version_str = f'--with-extra-version=-{brnch.name}_blkzs{blk_sz}'
 
     config_args = [
-        POSTGRES_SRC_PATH / brnch / 'configure',
+        POSTGRES_SRC_PATH / brnch.name / 'configure',
         f'--with-blocksize={blk_sz}',
         f'--prefix={install_path}',
         version_str,
     ]
 
     # for PBM branches, need some extra config args
-    if brnch != 'base':
+    if brnch.is_pbm:
         bg_shift = pbm_blk_shift(blk_sz, bg_size)
         config_args.append(f'--with-pbmblockshift={bg_shift}')
 
@@ -447,29 +446,33 @@ def build_postgres_extension(build_path: Path, extension: str):
         raise Exception(f'Got return code {ret} when installing extension {extension}')
 
 
-def build_postgres(brnch: str, blk_sz: int, bg_size: int):
+def build_postgres(dbconf: DbConfig):
     """Compiles PostgreSQL for the specified branch/block size."""
-    build_path = get_build_path(brnch, blk_sz, bg_size)
-    print(f'Compiling & installing postgres {brnch} with block size {blk_sz} and block group size {bg_size}')
+    build_path = dbconf.build_path
+    brnch = dbconf.branch
+    blk_sz = dbconf.block_size
+    bg_sz = dbconf.bg_size
+    print(f'Compiling & installing postgres {brnch.name} with block size {blk_sz} and block group size {bg_sz}')
     ret = subprocess.Popen('make', cwd=build_path).wait()
     if ret != 0:
-        raise Exception(f'Got return code {ret} when compiling postgres {brnch} with block size={blk_sz}, group size={bg_size}')
+        raise Exception(f'Got return code {ret} when compiling postgres {brnch.name} with block size={blk_sz}, group size={bg_sz}')
     ret = subprocess.Popen(['make', 'install'], cwd=build_path).wait()
     if ret != 0:
-        raise Exception(f'Got return code {ret} when installing postgres {brnch} with block size={blk_sz}, group size={bg_size}')
+        raise Exception(f'Got return code {ret} when installing postgres {brnch.name} with block size={blk_sz}, group size={bg_sz}')
 
     # compile desired extensions...
     for ext in ['pg_prewarm']:
         build_postgres_extension(build_path, ext)
 
 
-def clean_postgres(brnch: str, blk_sz: int, bg_size):
+def clean_postgres(dbconf: DbConfig):
     """Clean PostgreSQL build for the specified branch/block size."""
-    build_path = get_build_path(brnch, blk_sz, bg_size)
-    print(f'Cleaning postgres {brnch} with block size {blk_sz} and block group size {bg_size}')
+    build_path = dbconf.build_path
+    brnch = dbconf.branch
+    print(f'Cleaning postgres {brnch.name} with block size {dbconf.block_size} and block group size {dbconf.bg_size}')
     ret = subprocess.Popen(['make', 'clean'], cwd=build_path).wait()
     if ret != 0:
-        raise Exception(f'Got return code {ret} when cleaning postgres {brnch} with block size={blk_sz}, group size={bg_size}')
+        raise Exception(f'Got return code {ret} when cleaning postgres {brnch.name} with block size={dbconf.block_size}, group size={dbconf.bg_size}')
 
 
 def build_benchbase():
@@ -672,7 +675,7 @@ def pg_exec_file(conn: PgConnection, file):
 
 def create_and_populate_local_db(case: DbConfig):
     """Initialize a database for the given test case.
-    Note: we only need to initialize for the 'base' branch since each branch can use the same data dir
+    Note: we only need to initialize for the base branch since each branch can use the same data dir
     """
     db_name = f'TPCH_{case.sf}'
     create_ddl_file = 'ddl/create-tables-noindex.sql'
@@ -808,7 +811,7 @@ def setup_indexes_cluster(blk_sz: int, sf: int, *, prev: DbSetup, new: DbSetup):
     """Change indexes and clustering on the database. Remembers the changes in `last_config.json`"""
 
     with FabConnection(PG_HOST) as fabconn:
-        dbconf = DbConfig(branch='base', block_size=blk_sz, bg_size=0, sf=sf)
+        dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz, sf=sf)
         # Use large amount of memory for creating indexes
         config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'))
         start_remote_postgres(fabconn, dbconf)
@@ -840,14 +843,16 @@ def one_time_pg_setup():
     # Compile postgres for each different version
 
     for blk_sz in PG_BLK_SIZES:
-        config_postgres_repo('base', blk_sz, 0)
-        build_postgres('base', blk_sz, 0)
+        dbconf = DbConfig(BRANCH_POSTGRES_BASE, sf=0, block_size=blk_sz)
+        config_postgres_repo(dbconf)
+        build_postgres(dbconf)
 
-    for brnch in POSTGRES_PBM_BRANCHES.keys():
+    for brnch in POSTGRES_PBM_BRANCHES:
         for blk_sz in PG_BLK_SIZES:
             for bg_size in BLOCK_GROUP_SIZES:
-                config_postgres_repo(brnch, blk_sz, bg_size)
-                build_postgres(brnch, blk_sz, bg_size)
+                dbconf = DbConfig(brnch, sf=0, block_size=blk_sz, bg_size=bg_size)
+                config_postgres_repo(dbconf)
+                build_postgres(dbconf)
 
 
 def refresh_pg_installs():
@@ -867,24 +872,23 @@ def refresh_pg_installs():
 
     # Re-compile and re-install postgres for each configuration
     for blk_sz in PG_BLK_SIZES:
-        for brnch in POSTGRES_ALL_BRANCHES.keys():
+        for brnch in POSTGRES_ALL_BRANCHES:
             # touch PBM related files to reduce chance of needing to clean and fully rebuild...
-            if brnch != 'base':
-                incl_path = POSTGRES_SRC_PATH / brnch / 'src' / 'include' / 'storage'
+            if brnch.is_pbm:
+                incl_path = POSTGRES_SRC_PATH / brnch.name / 'src' / 'include' / 'storage'
                 (incl_path / 'pbm.h').touch(exist_ok=True)
 
-                src_path = POSTGRES_SRC_PATH / brnch / 'src' / 'backend' / 'storage' / 'buffer'
+                src_path = POSTGRES_SRC_PATH / brnch.name / 'src' / 'backend' / 'storage' / 'buffer'
                 (src_path / 'pbm.c').touch(exist_ok=True)
                 (src_path / 'pbm_internal.c').touch(exist_ok=True)
                 (src_path / 'freelist.c').touch(exist_ok=True)
                 (src_path / 'bufmgr.c').touch(exist_ok=True)
 
-            if brnch == 'base':
-                build_postgres(brnch, blk_sz, 0)
+                for bg_size in BLOCK_GROUP_SIZES:
+                    build_postgres(DbConfig(brnch, 0, block_size=blk_sz, bg_size=bg_size))
 
             else:
-                for bg_size in BLOCK_GROUP_SIZES:
-                    build_postgres(brnch, blk_sz, bg_size)
+                build_postgres(DbConfig(brnch, 0, block_size=blk_sz))
 
 
 def clean_pg_installs(base=False):
@@ -892,13 +896,13 @@ def clean_pg_installs(base=False):
     Run on the server host.
     """
 
-    for blk_sz in PG_BLK_SIZES:
-        if base:
-            clean_postgres('base', blk_sz, 0)
-
-        for brnch in POSTGRES_PBM_BRANCHES.keys():
-            for bg_size in BLOCK_GROUP_SIZES:
-                clean_postgres(brnch, blk_sz, bg_size)
+    for brnch in POSTGRES_ALL_BRANCHES:
+        for blk_sz in PG_BLK_SIZES:
+            if brnch.is_pbm:
+                for bg_sz in BLOCK_GROUP_SIZES:
+                    clean_postgres(DbConfig(brnch, sf=0, block_size=blk_sz, bg_size=bg_sz))
+            elif base:
+                clean_postgres(DbConfig(brnch, sf=0, block_size=blk_sz))
 
 
 def one_time_benchbase_setup():
@@ -917,7 +921,7 @@ def gen_test_data(sf: int, blk_sz: int):
     print('--------------------------------------------------------------------------------')
     print(f'---- Initializing data for blk_sz={blk_sz}, sf={sf}')
     print('--------------------------------------------------------------------------------')
-    dbconf = DbConfig('base', block_size=blk_sz, sf=sf, bg_size=None)
+    dbconf = DbConfig(BRANCH_POSTGRES_BASE, block_size=blk_sz, sf=sf)
     create_and_populate_local_db(dbconf)
 
 
@@ -927,7 +931,7 @@ def drop_all_indexes(sf: int, blk_sz: int):
         raise Exception(f'Must specify scale factor of databases to clean up!')
 
     print(f'~~~~~~~~~~ Dropping all indexes and constraints for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
-    dbconf = DbConfig('base', block_size=blk_sz, bg_size=0, sf=sf)
+    dbconf = DbConfig(BRANCH_POSTGRES_BASE, block_size=blk_sz, sf=sf)
     with FabConnection(PG_HOST) as fabconn:
         config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'))
         start_remote_postgres(fabconn, dbconf)
@@ -977,7 +981,6 @@ def reindex(args):
 
     # read in what indexes/clustering is currently used in the database
     # last_config = read_last_config()
-    # cur_setup: DbSetup =   # last_config[DbConfig(None, args.blk_sz, 0, args.sf)]
     prev_setup = get_last_config(ConfigKey(sf=args.sf, blk_sz=args.blk_sz))
 
     # special case: if 'none' is specified we want to forget what the clustering is (and do nothing)
@@ -1026,7 +1029,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     # Print out summary to the console
     print(f'======================================================================')
     print(f'== Running experiments with:')
-    print(f'==   Branch:                {dbconf.branch}')
+    print(f'==   Branch:                {dbconf.branch.name}')
     print(f'==   Scale factor:          {sf}')
     print(f'==   Block size:            {blk_sz} KiB')
     print(f'==   Block group size       {dbconf.bg_size} KiB')
@@ -1064,7 +1067,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
 
 def run_bench(args):
     experiment: str = args.experiment
-    branch: str = args.branch
+    branch: PgBranch = args.branch
     sf: int = args.sf
 
     if branch is None:
@@ -1081,7 +1084,7 @@ def run_bench(args):
         workload = workload.with_multiplier(args.count_multiplier)
 
     num_samples = args.num_samples
-    if branch not in ['base', 'pbm1'] and num_samples is None:
+    if branch.accepts_nsamples and num_samples is None:
         # default number of samples for branches which support it
         num_samples = 10
 

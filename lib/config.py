@@ -6,6 +6,8 @@ are constants that should be left alone.
 """
 
 import pathlib
+import dataclasses
+import typing
 
 
 ###########################
@@ -31,28 +33,49 @@ BUILD_ROOT = pathlib.Path('/home/ta3vande/PG_TESTS')
 #######################################
 # These generally should not be modified
 
+@dataclasses.dataclass
+class PgBranch:
+    gen: int  # "generation" which tracks what features have been implemented
+    name: str
+    git_branch: str
+
+    @property
+    def is_pbm(self) -> bool:
+        return self.gen > 0
+
+    @property
+    def accepts_nsamples(self) -> bool:
+        return self.gen > 1
+
+
 # Postgres git info: repository and branch names
 POSTGRES_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/postgresql-masters-work.git'
 # POSTGRES_GIT_URL = 'https://git.uwaterloo.ca/ta3vande/postgresql-masters-work.git'
-POSTGRES_BASE_BRANCH = 'REL_14_STABLE'
-POSTGRES_PBM_BRANCHES = {
-    # key = friendly name in folder paths
-    # value = git branch name
 
-    'pbm1': 'pbm_part1',
-    'pbm2': 'pbm_part2',
+BRANCH_POSTGRES_BASE = PgBranch(0, 'base', 'REL_14_STABLE')
+BRANCH_PBM1 = PgBranch(1, 'pbm1', 'pbm_part1')
+BRANCH_PBM2 = PgBranch(2, 'pbm2', 'pbm_part2')
+BRANCH_PBM_OLD = PgBranch(1, 'pbm_old', 'pbm_old')
 
-    # TEMP: for comparing changes in my own code...
-    # 'pbm_old': 'pbm_old',
-}
+POSTGRES_ALL_BRANCHES: typing.List[PgBranch] = [
+    BRANCH_POSTGRES_BASE,
+    BRANCH_PBM1,
+    BRANCH_PBM2,
+
+    # TEMP: for comparing changes in my own code
+    # BRANCH_PBM_OLD,
+]
+
+
+POSTGRES_PBM_BRANCHES: typing.List[PgBranch] = [
+    b for b in POSTGRES_ALL_BRANCHES if b.is_pbm
+]
 
 # Derived configuration: paths and branch mappings
 POSTGRES_SRC_PATH = BUILD_ROOT / 'pg_src'
 POSTGRES_BUILD_PATH = BUILD_ROOT / 'pg_build'
 POSTGRES_INSTALL_PATH = BUILD_ROOT / 'pg_install'
 POSTGRES_SRC_PATH_BASE = POSTGRES_SRC_PATH / 'base'
-POSTGRES_ALL_BRANCHES = POSTGRES_PBM_BRANCHES.copy()
-POSTGRES_ALL_BRANCHES['base'] = POSTGRES_BASE_BRANCH
 
 # Benchbase
 BENCHBASE_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/benchbase.git'

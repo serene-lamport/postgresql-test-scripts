@@ -42,12 +42,13 @@ def main():
         'bench',
         'testing'
     ], help=MAIN_HELP_TEXT)
-    parser.add_argument('-b', '--branch', type=str, default=None, dest='branch', choices=[*POSTGRES_ALL_BRANCHES.keys()])
+    parser.add_argument('-b', '--branch', type=str, default=None, dest='branch',
+                        choices=[b.name for b in POSTGRES_ALL_BRANCHES])
     parser.add_argument('-sf', '--scale-factor', type=int, default=None, dest='sf')
-    parser.add_argument('-bs', '--block-size', type=int, default=8, dest='blk_sz', choices=[1,2,4,8,16,32],
-                        help='Block size to use (KiB)')
-    parser.add_argument('-bgs', '--block-group-size', type=int, default=256, dest='bg_sz', choices=BLOCK_GROUP_SIZES,
-                        help='Size of PBM block groups (KiB)')
+    parser.add_argument('-bs', '--block-size', type=int, default=DEFAULT_BLOCK_SIZE, dest='blk_sz',
+                        choices=[1, 2, 4, 8, 16, 32], help='Block size to use (KiB)')
+    parser.add_argument('-bgs', '--block-group-size', type=int, default=DEFAULT_BG_SIZE, dest='bg_sz',
+                        choices=BLOCK_GROUP_SIZES, help='Size of PBM block groups (KiB)')
     parser.add_argument('-w', '--workload', type=str, default='tpch', choices=[*WORKLOADS_MAP.keys()],
                         help=f'Workload configuration. Options are: {", ".join(WORKLOADS_MAP.keys())}')
     parser.add_argument('-i', '--index-type', type=str, default=None, dest='index_type', metavar='INDEX',
