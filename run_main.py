@@ -69,6 +69,8 @@ def main():
                         help='If using a count workload, the amount to multiply the counts by')
     parser.add_argument('--eviction-samples', type=int, default=None, dest='num_samples',
                         help='Number of eviction samples for sampling-based PBM')
+    parser.add_argument('-sel', '--selectivity', type=float, default=None, dest='selectivity',
+                        help='Selectivity of the "alt" query types')
     args = parser.parse_args()
 
     if args.action == 'pg_setup':
@@ -105,19 +107,15 @@ def main():
     elif args.action == 'testing':
         pass
 
+        bbconf = BBaseConfig(1, WORKLOAD_MICRO_COUNTS)
+        create_bbase_config(1, bbconf, './test_conf_1.xml')
+
+        bbconf = BBaseConfig(1, WORKLOAD_MICRO_COUNTS.with_selectivity(0.3))
+        create_bbase_config(1, bbconf, './test_conf_2.xml')
+
     else:
         raise Exception(f'Unknown action {args.action}')
 
 
 if __name__ == '__main__':
     main()
-
-# TODO:
-# - [x] make "branch" an argument so litterally only one test at a time
-# - [x] add `pbm_evict_num_samples` as an argument, but we only want to set this if it is supported! (pbm2)
-# - [ ] maybe ... new script allowing to specify test configurations programmatically (in python) instead
-# - [ ] (future) modify scripts to work for TPCC as well, possibly others?
-# - [ ] ...
-
-# MAYBE:
-# - [ ] make generating data allowed from remote host so benchbase is ony needed on one machine

@@ -111,10 +111,43 @@ def test_micro_parallelism() -> Iterable[ExperimentConfig]:
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
+def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[ExperimentConfig]:
+    dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
+    base_dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, sf=10)
+
+    shmem = '2GB'
+    cm = 8  # 16 queries per stream
+    parallel_ops = [1, 2, 4, 8, 12, 16, 24, 32]
+    # syncscan_ops = ['on', 'off']
+
+    for nworkers, branch in product(parallel_ops, POSTGRES_ALL_BRANCHES):
+        dbconf = replace(base_dbconf, branch=branch)
+        bbconf = BBaseConfig(nworkers=nworkers,
+                             workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm).with_selectivity(selectivity))
+
+        for nsamples in samples(branch, [1, 2, 5, 10, 20]):
+            pgconf = RuntimePgConfig(shared_buffers=shmem,
+                                     pbm_evict_num_samples=nsamples,
+                                     synchronize_seqscans='on')
+
+            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
+
+
 if __name__ == '__main__':
     # Run actual experiments
     # run_tests('test_scripts_buffer_sizes_2', _TEST_test_buffer_sizes())
-    run_tests('buffer_sizes_1', test_micro_shared_memory())
-    run_tests('parallelism_1', test_micro_parallelism())
+
+    # Real tests
+    # run_tests('buffer_sizes_3', test_micro_shared_memory())
+    # run_tests('parallelism_3', test_micro_parallelism())
+    # run_tests('parallelism_same_nqueries_1', test_micro_parallelism_same_stream_size())
+    run_tests('parallelism_sel20', test_micro_parallelism_same_stream_size(0.2))
+    run_tests('parallelism_sel40', test_micro_parallelism_same_stream_size(0.4))
+    run_tests('parallelism_sel60', test_micro_parallelism_same_stream_size(0.6))
+    run_tests('parallelism_sel80', test_micro_parallelism_same_stream_size(0.8))
+
+    # TODO rerun ^ with different `selectivity` - {20%, 40%, 60%, 80%}?
+
+
 
     ...

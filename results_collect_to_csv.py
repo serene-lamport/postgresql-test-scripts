@@ -29,8 +29,9 @@ csv_cols = [
     # configuration from directory information:
     'experiment', 'dir', 'branch', 'block size',
     # configuration from configuration json file
-    'block_group_size', 'workload', 'scalefactor', 'clustering', 'indexes', 'shared_buffers', 'work_mem',
-    'synchronize_seqscans', 'pbm_evict_num_samples', 'parallelism', 'time', 'count_multiplier', 'prewarm',
+    'block_group_size', 'workload', 'scalefactor', 'selectivity', 'clustering', 'indexes', 'shared_buffers',
+    'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'parallelism', 'time', 'count_multiplier',
+    'prewarm',
     # from benchbase summary:
     'Throughput (requests/second)', 'Goodput (requests/second)', 'Benchmark Runtime (nanoseconds)',
     # latency from benchbase summary:

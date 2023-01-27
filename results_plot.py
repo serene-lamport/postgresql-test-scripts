@@ -10,6 +10,13 @@ from lib.config import *
 matplotlib.use('TkAgg')
 
 
+# rename certain columns to make them easier to work with
+rename_cols = {
+    'Average Latency (microseconds)': 'avg_latency',
+    'Throughput (requests/second)': 'throughput',
+}
+
+
 def to_mb(ms: str):
     """Convert memory size in postgres config format to # of MB"""
     units = ms[-2:].lower()
@@ -34,11 +41,11 @@ def plot_exp(df: pd.DataFrame, exp: str,
              x, xsort=None, xlabels=None, logx=False, xlabel=None,
              y='hit_rate',  ybound=None, ylabel=None,
              group: Union[str, Iterable[str]] = 'branch',
-             title='plot'):
+             title=None):
     """Plot an experiment."""
     df_exp = df[df['experiment'] == exp]
 
-    f, ax = plt.subplots()
+    f, ax = plt.subplots(num=title)
 
     for grp, df_plot in df_exp.groupby(group):
         if type(xsort) == bool and xsort:
@@ -68,12 +75,16 @@ def plot_exp(df: pd.DataFrame, exp: str,
 
 
 if __name__ == '__main__':
-    # Read in the data
-    df = pd.read_csv(COLLECTED_RESULTS_CSV, keep_default_na=False)
+    # Read in the data, converting certain column names
+    df = pd.read_csv(COLLECTED_RESULTS_CSV, keep_default_na=False).rename(columns=rename_cols)
+
+    # Add some columns for convenience
 
     # Convert shared buffers config to numbers for plotting
     df['shmem_mb'] = df['shared_buffers'].map(to_mb)
+    df['data_per_stream'] = df.data_read_gb / df.parallelism
 
+    # Output results
     print('================================================================================')
     print('== Post-process interactive prompt:')
     print('==   `df` contains a dataframe of the results')
@@ -83,23 +94,63 @@ if __name__ == '__main__':
     print(f'Generating plots...')
 
     # # plot some experiments
-    # f, ax = plot_exp(df, 'test_reset_stats_shmem',
-    #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-    #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
-    #                  title='Hit-rate vs shared buffer size')
-    # f, ax = plot_exp(df, 'test_shmem_prewarm_2', group=['branch', 'prewarm'],
-    #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-    #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
-    #                  title='Hit-rate vs shared buffer size with and without pre-warming')
-    # f, ax = plot_exp(df, 'test_sf100', group=['branch', 'prewarm'],
-    #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-    #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
-    #                  title='SF 100 Hit-rate vs shared buffer size')
+    plots = [
+        # plot_exp (df, 'test_reset_stats_shmem',
+        #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        #                  title='Hit-rate vs shared buffer size'),
+        # plot_exp(df, 'test_shmem_prewarm_2', group=['branch', 'prewarm'],
+        #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        #                  title='Hit-rate vs shared buffer size with and without pre-warming'),
+        # plot_exp(df, 'test_sf100', group=['branch', 'prewarm'],
+        #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        #                  title='SF 100 Hit-rate vs shared buffer size'),
 
-    f, ax = plot_exp(df, 'test_scripts_buffer_sizes', group=['branch', 'pbm_evict_num_samples'],
-                     x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-                     y='hit_rate', ylabel='hit rate', ybound=(0,1),
-                     title='Hit-rate vs shared buffer')
+        # plot_exp(df, 'test_scripts_buffer_sizes', group=['branch', 'pbm_evict_num_samples'],
+        #                  x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #                  y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        #                  title='Hit-rate vs shared buffer'),
+
+        # microbenchmarks varying the buffer size, with and without prewarm
+        plot_exp(df[df.prewarm == True], 'buffer_sizes_3', group=['branch', 'pbm_evict_num_samples'],
+                 x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+                 y='hit_rate', ylabel='hit rate', ybound=(0,1),
+                 title='Hit-rate vs shared buffer size with pre-warming'),
+        # plot_exp(df[df.prewarm == False], 'buffer_sizes_3', group=['branch', 'pbm_evict_num_samples'],
+        #          x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #          y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        #          title='Hit-rate vs shared buffer size without pre-warming'),
+
+        # microbenchmaks varying parallelism with and without syncscans
+        # plot_exp(df[df.synchronize_seqscans == 'on'], 'parallelism_3', group=['branch', 'pbm_evict_num_samples'],
+        #          x='parallelism', xsort=True, xlabel='Parallelism',
+        #          y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        #          title='Hit-rate vs parallelism with syncscans'),
+        # # plot_exp(df[df.synchronize_seqscans == 'off'], 'parallelism_3', group=['branch', 'pbm_evict_num_samples'],
+        # #          x='parallelism', xsort=True, xlabel='Parallelism',
+        # #          y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        # #          title='Hit-rate vs parallelism without syncscans'),
+        plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='hit_rate', ylabel='hit rate', ybound=(0,1),
+                 title='Hit-rate vs parallelism with syncscans'),
+        plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='throughput',
+                 title='Throughput vs parallelism'),
+        plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='data_per_stream', ylabel='Data read (GiB)',
+                 title='Data volume (per stream) vs parallelism'),
+
+        # TODO ^ plot the same thing with average_stream_s (?) instead of throughput?
+
+        # parallelism_same_nqueries_1,   parallelism_3
+
+    ]
+
 
     print(f'Showing plots...')
     plt.show()

@@ -1,10 +1,4 @@
 TODO
 ====
-
-- [ ] revisit clustering: is it better to simply cluster every time?
-- [ ] index defs:
-    - [ ] add BRIN/bloom for other tables
-    - [ ] add a brin-mostly setup (only brin/blook for ones where that makes sense, keep the btrees where they can't be replaced)
-    - [ ] brin only with no btrees (at least for the large tables)
-- [ ] process results:
-    - [ ] ...?
+- [ ] Modify scripts to work for TPCC as well, possibly others?
+- [ ] Alternate mode to pass in a % of table to benchbase for less variance with different #s of workers

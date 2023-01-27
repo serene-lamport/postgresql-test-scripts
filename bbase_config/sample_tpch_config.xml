@@ -16,6 +16,9 @@
     <!-- Control scale factor to generate different amount of data -->
     <scalefactor>0.1</scalefactor>
 
+    <!-- Selectivity gives the % of table to scan for the "alt" queries. If not specified or <= 0 then a random value in {1%, 10%, 50%, 100%} is chosen for each query. -->
+<!--    <selectivity>-1</selectivity>-->
+
     <!-- The workload -->
     <terminals>1</terminals>
     <works>

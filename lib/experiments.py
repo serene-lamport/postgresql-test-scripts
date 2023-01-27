@@ -24,7 +24,7 @@ from fabric import Connection as FabConnection
 import xml.etree.ElementTree as ET
 import tqdm
 from collections import defaultdict
-from dataclasses import dataclass, asdict, fields
+from dataclasses import dataclass, asdict, fields, field
 import pandas as pd
 
 from lib.config import *
@@ -46,7 +46,7 @@ BBASE_TIME = 600
 # Must be a power of 2 and multiple of block size
 BLOCK_GROUP_SIZES = [256, 1024, 4096]
 
-PG_WORK_MEM = '512MB'
+PG_WORK_MEM = '32MB'
 
 # Defaults for parameters with multiple options
 DEFAULT_BLOCK_SIZE = 8
@@ -62,7 +62,14 @@ DEFAULT_BG_SIZE = 256
 class WorkloadConfig(ABC):
     """Abstract class representing a benchbase workload. This knows how to configure benchbase."""
     workname: str
+    selectivity: Optional[float] = field(init=False, default=None)
     # TODO maybe include TPCH vs whatever else here?
+
+    def with_selectivity(self, selectivity: Optional[float]):
+        """Set the selectivity for the 'alt' queries."""
+        ret = copy.copy(self)
+        ret.selectivity = selectivity
+        return ret
 
     @abstractmethod
     def write_bbase_config(self, work_element: ET.Element): ...
@@ -83,7 +90,10 @@ class WeightedWorkloadConfig(WorkloadConfig):
 
     def to_config_map(self) -> dict:
         return {
+            # general workload config fields
             'workload': self.workname,
+            'selectivity': self.selectivity if self.selectivity is not None else '',
+            # specific to this workload type:
             'time': self.time_s,
         }
 
@@ -106,7 +116,10 @@ class CountedWorkloadConfig(WorkloadConfig):
 
     def to_config_map(self) -> dict:
         return {
+            # general workload config fields
             'workload': self.workname,
+            'selectivity': self.selectivity if self.selectivity is not None else '',
+            # specific to this workload type:
             'count_multiplier': self.count_multiplier,
         }
 
@@ -550,7 +563,7 @@ def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: Ru
     })
 
     conn.put(local_temp_path, remote_path)
-    os.remove(local_temp_path)
+    # os.remove(local_temp_path)
 
 
 def start_remote_postgres(conn: fabric.Connection, case: DbConfig):
@@ -590,7 +603,7 @@ def clear_pg_stats(case: DbConfig):
         conn.execute('SELECT pg_stat_reset();')
 
 
-def create_bbase_config(sf, bb_config: BBaseConfig, out, local=False):
+def create_bbase_config(sf: int, bb_config: BBaseConfig, out, local=False):
     """Set connection information and scale factor in a BenchBase config file."""
     tree = ET.parse('bbase_config/sample_tpch_config.xml')
     params = tree.getroot()
@@ -601,9 +614,16 @@ def create_bbase_config(sf, bb_config: BBaseConfig, out, local=False):
     params.find('terminals').text = str(bb_config.nworkers)
     params.find('randomSeed').text = '12345'
 
-    works = params.find('works')
+    # If applicable, add selectivity (making sure there isn't already a value for it first)
+    for sel in params.findall('selectivity'):
+        params.remove(sel)
+
+    selectivity = bb_config.workload.selectivity
+    if selectivity is not None:
+        ET.SubElement(params, 'selectivity').text = str(selectivity)
 
     # Specify the workload
+    works = params.find('works')
     for elem in works:
         works.remove(elem)
 
@@ -1067,11 +1087,12 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
 
 def run_bench(args):
     experiment: str = args.experiment
-    branch: PgBranch = args.branch
+    branch: PgBranch
     sf: int = args.sf
 
-    if branch is None:
-        raise Exception(f'Must specify branch!')
+    if args.branch is None or args.branch not in (b.name for b in POSTGRES_ALL_BRANCHES):
+        raise Exception(f'Must specify branch! Unrecognized value {args.branch}')
+    branch = {b.name: b for b in POSTGRES_ALL_BRANCHES}[args.branch]
 
     if sf is None:
         raise Exception(f'Must specify scale factor!')
@@ -1079,6 +1100,9 @@ def run_bench(args):
     if args.workload not in WORKLOADS_MAP:
         raise Exception(f'Unknown workload type {args.workload}')
     workload = WORKLOADS_MAP[args.workload]
+
+    if args.selectivity is not None:
+        workload = workload.with_selectivity(args.selectivity)
 
     if isinstance(workload, CountedWorkloadConfig):
         workload = workload.with_multiplier(args.count_multiplier)
