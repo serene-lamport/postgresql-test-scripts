@@ -55,7 +55,7 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
         # sort x values if requested
         if type(xsort) == bool and xsort:
             xsort = x
-        else:
+        elif xsort is False:
             xsort = None
 
         # average the y-values for the same x-value first if requested

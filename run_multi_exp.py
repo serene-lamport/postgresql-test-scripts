@@ -53,7 +53,7 @@ def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, dry_run=False
     NUM_EXPERIMENTS_RUN += 1
 
 
-def samples(brnch: PgBranch, ns: List[int]):
+def branch_samples(brnch: PgBranch, ns: List[int]):
     return ns if brnch.accepts_nsamples else [None]
 
 
@@ -71,7 +71,7 @@ def _TEST_test_buffer_sizes() -> Iterable[ExperimentConfig]:
     for shmem, brnch in product(['128MB', '1GB', '4GB'], POSTGRES_ALL_BRANCHES):
         dbconf = replace(base_dbconf, branch=brnch)
 
-        for nsamples in samples(brnch, [1, 10]):
+        for nsamples in branch_samples(brnch, [1, 10]):
             pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=nsamples)
 
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
@@ -88,7 +88,7 @@ def test_micro_shared_memory() -> Iterable[ExperimentConfig]:
         dbconf = replace(base_dbconf, branch=branch)
         bbconf = replace(base_bbconf, prewarm=prewarm)
 
-        for nsamples in samples(branch, [1, 2, 5, 10, 20]):
+        for nsamples in branch_samples(branch, [1, 2, 5, 10, 20]):
             pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=nsamples)
 
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
@@ -109,7 +109,7 @@ def test_micro_parallelism() -> Iterable[ExperimentConfig]:
         dbconf = replace(base_dbconf, branch=branch)
         bbconf = BBaseConfig(nworkers=nworkers, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm))
 
-        for nsamples, syncscans in product(samples(branch, [1, 2, 5, 10, 20]), syncscan_ops):
+        for nsamples, syncscans in product(branch_samples(branch, [1, 2, 5, 10, 20]), syncscan_ops):
             pgconf = RuntimePgConfig(shared_buffers=shmem,
                                      pbm_evict_num_samples=nsamples,
                                      synchronize_seqscans=syncscans)
@@ -131,7 +131,7 @@ def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[Expe
         bbconf = BBaseConfig(nworkers=nworkers,
                              workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm).with_selectivity(selectivity))
 
-        for ns in samples(branch, nsamples):
+        for ns in branch_samples(branch, nsamples):
             pgconf = RuntimePgConfig(shared_buffers=shmem,
                                      pbm_evict_num_samples=ns,
                                      synchronize_seqscans='on')
@@ -139,15 +139,16 @@ def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[Expe
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
-def test_WHY_SPIKE(seed: int) -> Iterable[ExperimentConfig]:
+def test_WHY_SPIKE(seed: int, parallel_ops=None) -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
     base_dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, sf=10)
 
     shmem = '2GB'
     cm = 6  # 12 queries per stream
-    # parallel_ops = [1, 2, 4, 8, 12, 16, 24, 32]
+    if parallel_ops is None:
+        # parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
+        parallel_ops = [2, 4, 8, 12, 16, 24, 32]
     # nsamples = [1, 2, 5, 10, 20]
-    parallel_ops = [2, 4, 8, 12, 16, 24, 32]
     nsamples = [1, 5, 10]
 
     for nworkers, branch in product(parallel_ops, POSTGRES_ALL_BRANCHES):
@@ -155,7 +156,7 @@ def test_WHY_SPIKE(seed: int) -> Iterable[ExperimentConfig]:
         bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
                              workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm))
 
-        for ns in samples(branch, nsamples):
+        for ns in branch_samples(branch, nsamples):
             pgconf = RuntimePgConfig(shared_buffers=shmem,
                                      pbm_evict_num_samples=ns,
                                      synchronize_seqscans='on')
@@ -179,9 +180,14 @@ if __name__ == '__main__':
     # run_tests('parallelism_sel80', test_micro_parallelism_same_stream_size(0.8))
 
     # TODO try the same thing 6 times, see if it repeats...
+    # fill in gaps in the graphs...
+    for s in [16312, 22289, 16987, 6262, 32495, 5786]:
+        run_tests('test_weird_spike_2', test_WHY_SPIKE(s, [1, 6]))
+
     # for s in [16312, 22289, 16987, 6262, 32495, 5786]:
     for s in [5786]:
         run_tests('test_weird_spike_2', test_WHY_SPIKE(s))
+
 
 
 
