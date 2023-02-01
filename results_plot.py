@@ -1,6 +1,6 @@
 #!/usr/bin/env -S python3 -i
 import pandas as pd
-from typing import Union, Iterable
+from typing import Union, Iterable, Optional
 import matplotlib.pyplot as plt
 import matplotlib
 
@@ -37,27 +37,48 @@ def format_str_or_iterable(to_fmt: Union[str, Iterable[str]]) -> str:
     return ', '.join(str(s) for s in to_fmt)
 
 
-def plot_exp(df: pd.DataFrame, exp: str,
-             x, xsort=None, xlabels=None, logx=False, xlabel=None,
-             y='hit_rate',  ybound=None, ylabel=None,
-             group: Union[str, Iterable[str]] = 'branch',
+def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
+             x, xsort=False, xlabels=None, logx=False, xlabel=None,
+             y, ylabel=None, ybound=None, avg_y_values=False,
+             group: Union[str, Iterable[str]] = ('branch', 'pbm_evict_num_samples'),
              title=None):
     """Plot an experiment."""
     df_exp = df[df['experiment'] == exp]
 
-    f, ax = plt.subplots(num=title)
+    if ax is None:
+        f, ax = plt.subplots(num=title)
+
+    if type(group) is not str:
+        group = list(group)
 
     for grp, df_plot in df_exp.groupby(group):
+        # sort x values if requested
         if type(xsort) == bool and xsort:
             xsort = x
-        if xsort is not None and xsort is not False:
+        else:
+            xsort = None
+
+        # average the y-values for the same x-value first if requested
+        if avg_y_values:
+            if xsort is not None and xsort is not x:
+                cols = [x, xsort, y]
+            else:
+                cols = [x, y]
+
+            # print(df_plot[cols])
+            df_plot = df_plot[cols].groupby(x).mean().reset_index()
+            # print(df_plot)
+
+        if xsort is not None:
             df_plot = df_plot.sort_values(by=xsort)
 
+        # whether to use log-scale for x or not
         if logx:
             plotfn = lambda *a, **kwa: ax.semilogx(*a, base=2, **kwa)
         else:
             plotfn = ax.plot
 
+        # actually plot the current group
         plotfn(df_plot[x], df_plot[y], label=format_str_or_iterable(grp))
 
     ax.minorticks_off()
@@ -71,10 +92,10 @@ def plot_exp(df: pd.DataFrame, exp: str,
     ax.legend(title=format_str_or_iterable(group))
     ax.set_title(str(title))
 
-    return f, ax
+    return ax
 
 
-if __name__ == '__main__':
+def main():
     # Read in the data, converting certain column names
     df = pd.read_csv(COLLECTED_RESULTS_CSV, keep_default_na=False).rename(columns=rename_cols)
 
@@ -114,10 +135,10 @@ if __name__ == '__main__':
         #                  title='Hit-rate vs shared buffer'),
 
         # microbenchmarks varying the buffer size, with and without prewarm
-        plot_exp(df[df.prewarm == True], 'buffer_sizes_3', group=['branch', 'pbm_evict_num_samples'],
-                 x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-                 y='hit_rate', ylabel='hit rate', ybound=(0,1),
-                 title='Hit-rate vs shared buffer size with pre-warming'),
+        # plot_exp(df[df.prewarm == True], 'buffer_sizes_3', group=['branch', 'pbm_evict_num_samples'],
+        #          x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #          y='hit_rate', ylabel='hit rate', ybound=(0,1),
+        #          title='Hit-rate vs shared buffer size with pre-warming'),
         # plot_exp(df[df.prewarm == False], 'buffer_sizes_3', group=['branch', 'pbm_evict_num_samples'],
         #          x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
         #          y='hit_rate', ylabel='hit rate', ybound=(0,1),
@@ -132,28 +153,64 @@ if __name__ == '__main__':
         # #          x='parallelism', xsort=True, xlabel='Parallelism',
         # #          y='hit_rate', ylabel='hit rate', ybound=(0,1),
         # #          title='Hit-rate vs parallelism without syncscans'),
-        plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
-                 x='parallelism', xsort=True, xlabel='Parallelism',
-                 y='hit_rate', ylabel='hit rate', ybound=(0,1),
-                 title='Hit-rate vs parallelism with syncscans'),
-        plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
-                 x='parallelism', xsort=True, xlabel='Parallelism',
-                 y='throughput',
-                 title='Throughput vs parallelism'),
-        plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
-                 x='parallelism', xsort=True, xlabel='Parallelism',
-                 y='data_per_stream', ylabel='Data read (GiB)',
-                 title='Data volume (per stream) vs parallelism'),
+        # plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
+        #          x='parallelism', xsort=True, xlabel='Parallelism',
+        #          y='hit_rate', ylabel='hit rate', ybound=(0, 1),
+        #          title='Hit-rate vs parallelism with syncscans'),
+        # plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
+        #          x='parallelism', xsort=True, xlabel='Parallelism',
+        #          y='throughput',
+        #          title='Throughput vs parallelism'),
+        # plot_exp(df, 'parallelism_same_nqueries_1', group=['branch', 'pbm_evict_num_samples'],
+        #          x='parallelism', xsort=True, xlabel='Parallelism',
+        #          y='data_per_stream', ylabel='Data read (GiB)',
+        #          title='Data volume (per stream) vs parallelism'),
 
-        # TODO ^ plot the same thing with average_stream_s (?) instead of throughput?
+
 
         # parallelism_same_nqueries_1,   parallelism_3
 
     ]
 
+    f, ax = plt.subplots(2, 2)
+    for i, exp in enumerate(['parallelism_sel20', 'parallelism_sel40', 'parallelism_sel60', 'parallelism_sel80']):
+        plot_exp(df, exp, ax=ax[i//2][i%2], group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='hit_rate', ylabel='hit rate', ybound=(0, 1),
+                 title=exp + ' hit_rate vs parallelism')
+
+    # TODO ^ plot the same thing with average_stream_s (?) instead of throughput?
+    # TODO figure out the weird spike!
+
+    plot_exp(df, 'test_weird_spike_1', group=['branch', 'pbm_evict_num_samples'],
+             x='parallelism', xsort=True, xlabel='Parallelism',
+             y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
+             title='averaged hit_rate vs parallelism 1')
+
+    plot_exp(df, 'test_weird_spike_2', group=['branch', 'pbm_evict_num_samples'],
+             x='parallelism', xsort=True, xlabel='Parallelism',
+             y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
+             title='averaged hit_rate vs parallelism 2')
+
+    f, ax = plt.subplots(2, 3)
+    for i, s in enumerate([16312, 22289, 16987, 6262, 32495]):
+        plot_exp(df[df.seed == str(s)], 'test_weird_spike_2', ax=ax[i//3][i%3],
+                 group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
+                 title=f'averaged hit_rate vs parallelism seed={s}')
+
+
+
 
     print(f'Showing plots...')
     plt.show()
 
+    return df, plots
+
     # TODO consider `seaborn` package for better visualization...
     # TODO split script into generating results.csv (collect_results?) and processing results.csv (graphing, etc.)
+
+
+if __name__ == '__main__':
+    df, plots = main()

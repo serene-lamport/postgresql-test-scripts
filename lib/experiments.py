@@ -204,12 +204,14 @@ class BBaseConfig:
     """
     nworkers: int
     workload: WorkloadConfig
-    prewarm: bool = False
+    seed: int = 12345
+    prewarm: bool = True
 
     def to_config_map(self) -> dict:
         return {
             'parallelism': self.nworkers,
             'prewarm': self.prewarm,
+            'seed': self.seed,
             **self.workload.to_config_map(),
         }
 
@@ -563,7 +565,7 @@ def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: Ru
     })
 
     conn.put(local_temp_path, remote_path)
-    # os.remove(local_temp_path)
+    os.remove(local_temp_path)
 
 
 def start_remote_postgres(conn: fabric.Connection, case: DbConfig):
@@ -612,7 +614,7 @@ def create_bbase_config(sf: int, bb_config: BBaseConfig, out, local=False):
     params.find('password').text = PG_PASSWD
     params.find('scalefactor').text = str(sf)
     params.find('terminals').text = str(bb_config.nworkers)
-    params.find('randomSeed').text = '12345'
+    params.find('randomSeed').text = str(bb_config.seed)
 
     # If applicable, add selectivity (making sure there isn't already a value for it first)
     for sel in params.findall('selectivity'):
