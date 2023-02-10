@@ -1,8 +1,11 @@
 #!/usr/bin/env -S python3 -i
 import pandas as pd
-from typing import Union, Iterable, Optional
+from typing import Union, Iterable, Optional, Sequence
+from collections import OrderedDict
 import matplotlib.pyplot as plt
 import matplotlib
+from matplotlib.ticker import FixedLocator, FixedFormatter
+import seaborn.objects as so
 
 from lib.config import *
 
@@ -97,11 +100,14 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
             plotfn = ax.plot
 
         # actually plot the current group
-        # err_bars = avg_y_values
-        # if err_bars:
-        #     plotfn(df_plot[x], df_plot[y], label=format_str_or_iterable(grp), yerr=df_plot['err'])
-        # else:
-        plotfn(df_plot[x], df_plot[y], label=format_str_or_iterable(grp))
+        err_bars = avg_y_values
+        if err_bars:
+            ax.errorbar(df_plot[x], df_plot[y], yerr=df_plot['err'], label=format_str_or_iterable(grp))
+            if logx:
+                ax.set_xscale('log')
+            # plotfn(df_plot[x], df_plot[y], label=format_str_or_iterable(grp), yerr=df_plot['err'])
+        else:
+            plotfn(df_plot[x], df_plot[y], label=format_str_or_iterable(grp))
 
     ax.minorticks_off()
     if ybound is not None:
@@ -115,6 +121,55 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
     ax.set_title(str(title))
 
     return ax
+
+
+def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
+             x, xlabels=None, logx=False, xlabel=None,
+             y, ybound=None, ylabel=None,  avg_y_values=False,
+             group: Union[str, Sequence[str]] = ('branch', 'pbm_evict_num_samples'),
+             title=None):
+    df_exp = df[df.experiment == exp]
+
+    if isinstance(group, Sequence):
+        df_exp['grouping'] = df_exp[group[0]].astype(str)
+        df_exp['grouping'] = df_exp['grouping'].str.cat([df_exp[g] for g in group[1:]], sep=', ', na_rep='').str.strip(', ')
+        group = 'grouping'
+
+    pl = so.Plot(df_exp, x=x, y=y, color=group)
+
+    if xlabels is not None:
+        # TODO make sure these are in the correct order...
+        xvals = list(OrderedDict.fromkeys(df_exp[x]))
+        xlabs = list(OrderedDict.fromkeys(df_exp[xlabels]))
+
+        pl = pl.scale(x=so.Continuous()
+               .tick(locator=FixedLocator(xvals))
+               .label(formatter=FixedFormatter(xlabs)))
+
+    # TODO how to log scale?
+    # TODO can use "nominal" to work around the issue... (but make sure to sort when passing to the locator)
+    # if logx:
+    #     pl = pl.scale(x='log')
+
+    if ybound is not None:
+        pl = pl.limit(y=ybound)
+
+    pl = pl.add(so.Line(marker='o'), so.Agg()).add(so.Band(), so.Est(errorbar=('se', 1.96)))
+
+    pl.label(title=title, x=xlabel, y=ylabel)
+
+    pl.show()
+
+    ...
+
+
+# pl_base = so.Plot(df, x='x', y='y', group='g', color='g')
+#     pl1 = pl_base.add(so.Line(marker='o'), so.Agg()).add(so.Band(), so.Est(errorbar=('se', 1.96)))
+#     pl2 = pl1.scale(x=so.Continuous()
+#                       .tick(locator=FixedLocator([1, 2, 3]))
+#                       .label(formatter=matplotlib.ticker.FixedFormatter(['a', 'b', 'c']))
+#                     )
+
 
 
 def main(df: pd.DataFrame):
@@ -202,10 +257,14 @@ def main(df: pd.DataFrame):
     #          y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
     #          title='averaged hit_rate vs parallelism 1')
 
-    # plot_exp(df, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
-    #          x='parallelism', xsort=True, xlabel='Parallelism',
-    #          y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
-    #          title='averaged hit_rate vs parallelism 2')
+    plot_exp(df, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+             x='parallelism', xsort=True, xlabel='Parallelism',
+             y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
+             title='averaged hit_rate vs parallelism 2')
+    plot_exp_sb(df, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+                x='parallelism', xlabel='Parallelism',  # xsort=True,
+                y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
+                title='averaged hit_rate vs parallelism 2')
     #
     # f, axs = plt.subplots(2, 3)
     # for i, s in enumerate([16312, 22289, 16987, 6262, 32495, 5786]):
@@ -235,12 +294,77 @@ if __name__ == '__main__':
 
     df, plots = main(df)
 
-    # TESTING
+
+# TESTING
+if False:
+# if True:
+
     df = pd.DataFrame({
-        'x': [1, 1, 1, 2, 2, 2],
-        'y': [0, 0.8, 0.4, 2, 2.1, 2.2],
-        'xlabels': ['a', 'a', 'a', 'b', 'b', 'b'],
+        'x': [
+            1, 1, 1,
+            2, 2, 2,
+            3, 3, 3,
+            1, 1, 1,
+            2, 2, 2,
+            3, 3, 3,
+              ],
+        'y': [
+            0, 0.8, 0.4,
+            2, 2.1, 2.2,
+            2.5, 2.2, 2.6,
+            3.1, 3.0, 3.1,
+            2.8, 2.2, 2.7,
+            4.0, 4.4, 5.0,
+        ],
+        # 'g': [
+        #     0,0,0,0,0,0,0,0,0,
+        #     1,1,1,1,1,1,1,1,1,
+        # ],
+        'g': ['1'] * 9 + ['2'] * 9,
+        'xlabels': [
+            'a', 'a', 'a',
+            'b', 'b', 'b',
+            'c', 'c', 'c',
+            'a', 'a', 'a',
+            'b', 'b', 'b',
+            'c', 'c', 'c',
+        ],
     })
+
+    import seaborn as sb
+    import seaborn.objects as so
+    from matplotlib.ticker import FixedLocator, FixedFormatter
+
+    def transform_ticks(t: int):
+        if t > 2:
+            return 'lots!'
+        else:
+            return f'{t} t'
+
+    pl_base = so.Plot(df, x='x', y='y', group='g', color='g')
+    # pl_base = so.Plot(df, x='x', y='y', group=df[['g', 'x']])
+    pl1 = pl_base.add(so.Line(marker='o'), so.Agg()).add(so.Band(), so.Est(errorbar=('se', 1.96)))
+    pl2 = pl1.scale(x=so.Continuous()
+                      .tick(locator=FixedLocator([1, 2, 3]))
+                      .label(formatter=matplotlib.ticker.FixedFormatter(['a', 'b', 'c']))
+                      # .tick(locator=matplotlib.ticker.LogLocator())
+                      # .label(formatter=matplotlib.ticker.LogFormatter(base=2))
+                    )
+    # pl2 = pl2.scale(x='log')
+
+    pl2.show()
+
+    # pl1.show()
+    #
+    # p = pl1.plot()
+    # ax = p._figure.axes[0]
+    # ax.set_xticks([1, 2, 3], labels=['a', 'b', 'c'])
+
+    # f, ax = plt.subplots()
+    # pl2 = pl1.on(ax)
+    # ax.set_xticks([1, 2, 3,], labels=['a', 'b', 'c'])
+    # pl2.show()
+
 
 
     # grps = df.groupby(['x', 'xlabels'])
