@@ -16,7 +16,8 @@ import typing
 # these options should be modified by anyone trying to run this script to reproduce results
 
 # Postgres connection information
-PG_HOST: str = 'tem112'
+PG_HOST_TPCH: str = 'tem112'
+PG_HOST_TPCC: str = 'tem114'
 PG_PORT: str = '5432'
 PG_USER: str = 'ta3vande'
 PG_PASSWD: str = ''
@@ -53,14 +54,17 @@ POSTGRES_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/postgresql-masters-work.gi
 # POSTGRES_GIT_URL = 'https://git.uwaterloo.ca/ta3vande/postgresql-masters-work.git'
 
 BRANCH_POSTGRES_BASE = PgBranch(0, 'base', 'REL_14_STABLE')
-BRANCH_PBM1 = PgBranch(1, 'pbm1', 'pbm_part1')
-BRANCH_PBM2 = PgBranch(2, 'pbm2', 'pbm_part2')
+BRANCH_PBM1 = PgBranch(1, 'pbm1', 'pbm_part1')  # described in paper
+BRANCH_PBM2 = PgBranch(2, 'pbm2', 'pbm_part2')  # using sampling-based eviction
+BRANCH_PBM3 = PgBranch(2, 'pbm3', 'pbm_part3')  # some support for non-registered buffers
+
 BRANCH_PBM_OLD = PgBranch(1, 'pbm_old', 'pbm_old')
 
 POSTGRES_ALL_BRANCHES: typing.List[PgBranch] = [
     BRANCH_POSTGRES_BASE,
     BRANCH_PBM1,
     BRANCH_PBM2,
+    BRANCH_PBM3,
 
     # TEMP: for comparing changes in my own code
     # BRANCH_PBM_OLD,

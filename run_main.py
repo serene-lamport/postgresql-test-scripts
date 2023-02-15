@@ -14,7 +14,8 @@ MAIN_HELP_TEXT = """Action to perform. Actions are:
     pg_clean+base:      `make clean` for PBM installations AND the default installation
     bbase_setup:        install benchbase on current host
     bbase_reinstall:    unpack benchbase into the install directory without rebuilding it
-    gen_test_data:      load test data for the given scale factor for all test configurations
+    gen_data_tpch:      load test data for the given scale factor for all test configurations
+    gen_data_tpcc:      load test data for TPCC, scale factor = # of warehouses
     drop_indexes:       used to remove and indexes and constraints for given scale factor
     reindex:            set the indexes clustering without running benchmarks
     bench:              run benchmarks using the specified scale factor and index type
@@ -36,7 +37,8 @@ def main():
         'pg_clean+base',
         'bbase_setup',
         'bbase_reinstall',
-        'gen_test_data',
+        'gen_data_tpch',
+        'gen_data_tpcc',
         'drop_indexes',
         'reindex',
         'bench',
@@ -91,11 +93,14 @@ def main():
     elif args.action == 'bbase_reinstall':
         install_benchbase()
 
-    elif args.action == 'gen_test_data':
-        gen_test_data(args.sf, blk_sz=args.blk_sz)
+    elif args.action == 'gen_data_tpch':
+        gen_data_tpch(args.sf, blk_sz=args.blk_sz)
+
+    elif args.action == 'gen_data_tpcc':
+        gen_data_tpcc(args.sf, blk_sz=args.blk_sz)
 
     elif args.action == 'drop_indexes':
-        drop_all_indexes(args.sf, blk_sz=args.blk_sz)
+        drop_all_indexes_tpch(args.sf, blk_sz=args.blk_sz)
 
     elif args.action == 'reindex':
         reindex(args)

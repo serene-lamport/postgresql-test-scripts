@@ -70,7 +70,15 @@ def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, dry_run=False
 
 
 def branch_samples(brnch: PgBranch, ns: List[int]):
-    return ns if brnch.accepts_nsamples else [None]
+    # Some branches don't support the pbm_num_samples arg at all
+    if not brnch.accepts_nsamples:
+        return [None]
+    # For ones that do, only include case with 1 sample for PBM2\
+    # Multiple purely-random tests would be redundant
+    elif brnch is BRANCH_PBM2:
+        return ns
+    else:
+        return [n for n in ns if n > 1]
 
 
 ##############################
@@ -82,10 +90,11 @@ def _TEST_test_script() -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
     bbconf = BBaseConfig(nworkers=2, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(2))
 
-    base_dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, sf=1)
+    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=1)
 
     for shmem, brnch in product(['128MB', '1GB'], [BRANCH_POSTGRES_BASE, BRANCH_PBM2]):
-        dbconf = replace(base_dbconf, branch=brnch)
+        dbbin = DbBin(brnch)
+        dbconf = DbConfig(dbbin, dbdata)
 
         for nsamples in branch_samples(brnch, [1, 10]):
             pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=nsamples)
@@ -93,16 +102,17 @@ def _TEST_test_script() -> Iterable[ExperimentConfig]:
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
-def test_micro_shared_memory(seed: int) -> Iterable[ExperimentConfig]:
+def test_micro_shared_memory(seed: int, parallelism=8) -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
-    base_bbconf = BBaseConfig(nworkers=8, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(8), seed=seed)
-    base_dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, sf=10)
+    base_bbconf = BBaseConfig(nworkers=parallelism, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(8), seed=seed)
+    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
     shmem_ops = ['256MB', '512MB', '1GB', '2GB', '4GB', '8GB', '16GB']
 
     # for shmem, prewarm, branch in product(shmem_ops, [True, False], POSTGRES_ALL_BRANCHES):
     for shmem, prewarm, branch in product(shmem_ops, [True], POSTGRES_ALL_BRANCHES):
-        dbconf = replace(base_dbconf, branch=branch)
+        dbbin = DbBin(branch)
+        dbconf = DbConfig(dbbin, dbdata)
         bbconf = replace(base_bbconf, prewarm=prewarm)
 
         for nsamples in branch_samples(branch, [1, 2, 5, 10, 20]):
@@ -113,20 +123,22 @@ def test_micro_shared_memory(seed: int) -> Iterable[ExperimentConfig]:
 
 def test_micro_parallelism() -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
-    base_dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, sf=10)
+    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
     shmem = '2GB'
     total_queries = 2**6
     parallel_ops = [1, 2, 4, 8, 16, 32]
     syncscan_ops = ['on', 'off']
+    nsamples = [1, 2, 5, 10, 20]
 
     for nworkers, branch in product(parallel_ops, POSTGRES_ALL_BRANCHES):
         cm = total_queries // nworkers
 
-        dbconf = replace(base_dbconf, branch=branch)
+        dbbin = DbBin(branch)
+        dbconf = DbConfig(dbbin, dbdata)
         bbconf = BBaseConfig(nworkers=nworkers, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm))
 
-        for nsamples, syncscans in product(branch_samples(branch, [1, 2, 5, 10, 20]), syncscan_ops):
+        for nsamples, syncscans in product(branch_samples(branch, nsamples), syncscan_ops):
             pgconf = RuntimePgConfig(shared_buffers=shmem,
                                      pbm_evict_num_samples=nsamples,
                                      synchronize_seqscans=syncscans)
@@ -136,7 +148,7 @@ def test_micro_parallelism() -> Iterable[ExperimentConfig]:
 
 def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
-    base_dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, sf=10)
+    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
     shmem = '2GB'
     cm = 8  # 16 queries per stream
@@ -144,7 +156,8 @@ def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[Expe
     nsamples = [1, 2, 5, 10, 20]
 
     for nworkers, branch in product(parallel_ops, POSTGRES_ALL_BRANCHES):
-        dbconf = replace(base_dbconf, branch=branch)
+        dbbin = DbBin(branch)
+        dbconf = DbConfig(dbbin, dbdata)
         bbconf = BBaseConfig(nworkers=nworkers,
                              workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm).with_selectivity(selectivity))
 
@@ -158,7 +171,7 @@ def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[Expe
 
 def test_WHY_SPIKE(seed: int, parallel_ops=None) -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
-    base_dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, sf=10)
+    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
     shmem = '2GB'
     cm = 6  # 12 queries per stream
@@ -168,7 +181,8 @@ def test_WHY_SPIKE(seed: int, parallel_ops=None) -> Iterable[ExperimentConfig]:
     nsamples = [1, 5, 10]
 
     for nworkers, branch in product(parallel_ops, POSTGRES_ALL_BRANCHES):
-        dbconf = replace(base_dbconf, branch=branch)
+        dbbin = DbBin(branch)
+        dbconf = DbConfig(dbbin, dbdata)
         bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
                              workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm))
 
@@ -180,26 +194,40 @@ def test_WHY_SPIKE(seed: int, parallel_ops=None) -> Iterable[ExperimentConfig]:
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
+def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], dry=True):
+    not_tried = list(exp)[done_count:]
+    if dry:
+        print("First retry:")
+        print(not_tried[0].dbconf)
+        print(not_tried[0].pgconf)
+    else:
+        run_tests(e_str, not_tried)
+
+
 if __name__ == '__main__':
     # Run actual experiments
-    run_tests('test_scripts_buffer_sizes_2', _TEST_test_script())
+    # run_tests('test_scripts_buffer_sizes_2', _TEST_test_script())
 
     # Real tests
     # run_tests('buffer_sizes_3', test_micro_shared_memory())
     # run_tests('parallelism_3', test_micro_parallelism())
     # run_tests('parallelism_same_nqueries_1', test_micro_parallelism_same_stream_size())
 
-    # TODO analyze results of selectivity \/
     # run_tests('parallelism_sel20_2', test_micro_parallelism_same_stream_size(0.2))
     # run_tests('parallelism_sel40_2', test_micro_parallelism_same_stream_size(0.4))
     # run_tests('parallelism_sel60_2', test_micro_parallelism_same_stream_size(0.6))
     # run_tests('parallelism_sel80_2', test_micro_parallelism_same_stream_size(0.8))
-
-    # # TODO try the same thing 6 times, see if it repeats...
+    #
     # for s in [16312, 22289, 16987, 6262, 32495, 5786]:
     #     run_tests('test_weird_spike_3', test_WHY_SPIKE(s))
 
     # for s in [29020, 29848, 15858]:
     #     run_tests('buffer_sizes_4', test_micro_shared_memory(s))
+
+    # for s in [29020, 29848, 15858]:
+    #     run_tests('buffer_sizes_p16_1', test_micro_shared_memory(s, parallelism=16))
+
+    # re-run part which failed...
+    # rerun_failed(43, 'buffer_sizes_p16_1', test_micro_shared_memory(15858, parallelism=16))
 
     ...

@@ -35,16 +35,18 @@ from lib.config import *
 ##############################
 
 # Postgres block size (KiB)
-PG_BLK_SIZES = [8, 32]
-# PG_BLK_SIZES = [8]
+# PG_BLK_SIZES = [8, 32]
+PG_BLK_SIZES = [8]
 
 # Time to run tests (s)
-# BBASE_TIME = 60
-BBASE_TIME = 600
+# BBASE_TIME = 600
+BBASE_TIME = 20
+BBASE_WARMUP_TIME = 10
 
 # Allowed sizes of block groups (in KiB). Database is compiled for each of these sizes.
 # Must be a power of 2 and multiple of block size
-BLOCK_GROUP_SIZES = [256, 1024, 4096]
+# BLOCK_GROUP_SIZES = [256, 1024, 4096]
+BLOCK_GROUP_SIZES = [256]
 
 PG_WORK_MEM = '32MB'
 
@@ -58,12 +60,22 @@ DEFAULT_BG_SIZE = 256
 ##########
 
 
+@dataclass(frozen=True)
+class Workload:
+    name: str
+    base_config_file: str
+    db_host: str
+
+    def db_name(self, sf: int):
+        return f'{self.name.upper()}_{sf}'
+
+
 @dataclass
 class WorkloadConfig(ABC):
     """Abstract class representing a benchbase workload. This knows how to configure benchbase."""
     workname: str
+    workload: Workload
     selectivity: Optional[float] = field(init=False, default=None)
-    # TODO maybe include TPCH vs whatever else here?
 
     def with_selectivity(self, selectivity: Optional[float]):
         """Set the selectivity for the 'alt' queries."""
@@ -84,7 +96,30 @@ class WeightedWorkloadConfig(WorkloadConfig):
     weights: str
     time_s: int
 
+    warmup_s: int = 0
+    rate: str = 'unlimited'
+    arrival: str = 'regular'
+
+    def with_rate(self, q_per_s: int) -> 'WeightedWorkloadConfig':
+        ret = copy.copy(self)
+        ret.rate = str(q_per_s)
+        return ret
+
+    def with_poisson_arrival(self) -> 'WeightedWorkloadConfig':
+        ret = copy.copy(self)
+        ret.arrival = 'poisson'
+        return ret
+
+    def with_times(self, time_s, warmup) -> 'WeightedWorkloadConfig':
+        ret = copy.copy(self)
+        ret.time_s = time_s
+        ret.warmup_s = warmup
+        return ret
+
     def write_bbase_config(self, work_element: ET.Element):
+        ET.SubElement(work_element, 'rate').text = self.rate
+        ET.SubElement(work_element, 'arrival').text = self.arrival
+        ET.SubElement(work_element, 'warmup').text = str(self.warmup_s)
         ET.SubElement(work_element, 'weights').text = self.weights
         ET.SubElement(work_element, 'time').text = str(self.time_s)
 
@@ -95,6 +130,9 @@ class WeightedWorkloadConfig(WorkloadConfig):
             'selectivity': self.selectivity if self.selectivity is not None else '',
             # specific to this workload type:
             'time': self.time_s,
+            'warmup': self.warmup_s,
+            'rate': self.rate,
+            'arrival': self.arrival,
         }
 
 
@@ -104,7 +142,7 @@ class CountedWorkloadConfig(WorkloadConfig):
     counts: List[int]
     count_multiplier: int = 1
 
-    def with_multiplier(self, cm):
+    def with_multiplier(self, cm) -> 'CountedWorkloadConfig':
         """Set the count for each query in each thread"""
         ret = copy.copy(self)
         ret.count_multiplier = cm
@@ -112,6 +150,9 @@ class CountedWorkloadConfig(WorkloadConfig):
         return ret
 
     def write_bbase_config(self, work_element: ET.Element):
+        ET.SubElement(work_element, 'rate').text = 'unlimited'
+        ET.SubElement(work_element, 'arrival').text = 'regular'
+        # ET.SubElement(work_element, 'warmup').text = '0'
         ET.SubElement(work_element, 'counts').text = ','.join(str(c * self.count_multiplier) for c in self.counts)
 
     def to_config_map(self) -> dict:
@@ -125,16 +166,23 @@ class CountedWorkloadConfig(WorkloadConfig):
 
 
 # The available workloads
-WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w',  weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0', time_s=BBASE_TIME)
-WORKLOAD_MICRO_WEIGHTS = WeightedWorkloadConfig('micro_w', weights='0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1', time_s=BBASE_TIME)
-WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c',  counts=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0])
-WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', counts=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1])
+TPCH = Workload('tpch', 'bbase_config/sample_tpch_config.xml', PG_HOST_TPCH)
+TPCC = Workload('tpcc', 'bbase_config/sample_tpcc_config.xml', PG_HOST_TPCC)
+
+
+WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0', time_s=BBASE_TIME)
+WORKLOAD_MICRO_WEIGHTS = WeightedWorkloadConfig('micro_w', TPCH, weights='0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1', time_s=BBASE_TIME)
+WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c', TPCH, counts=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0])
+WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', TPCH, counts=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1])
+WORKLOAD_TPCC = WeightedWorkloadConfig('tpcc', TPCC, weights='45,43,4,4,4', time_s=BBASE_TIME, warmup_s=BBASE_WARMUP_TIME)
+
 
 WORKLOADS_MAP: Dict[str, WorkloadConfig] = {c.workname: c for c in [
     WORKLOAD_TPCH_WEIGHTS,
     WORKLOAD_MICRO_WEIGHTS,
     WORKLOAD_TPCH_COUNTS,
     WORKLOAD_MICRO_COUNTS,
+    WORKLOAD_TPCC,
 ]}
 
 
@@ -144,37 +192,16 @@ class ConfigKey:
     sf: int
     blk_sz: int
 
-    @property
-    def tpch_data_path(self) -> Path:
-        return PG_DATA_ROOT / f'pg_tpch_sf{self.sf}_blksz{self.blk_sz}'
-
-
-# TODO add a "ComptimePgConfig" with (branch, block_size, bg_size)
-# this can be used for a bunch of the helper functions which use these args...
-# maybe can convert back and forth with DbConfig?
 
 @dataclass(frozen=True)
-class DbConfig:
+class DbBin:
     """
-    Information about the database is configured: branch/code being used, block size,
-    and scale factor. These are used to decide which binaries to use (branch, block_size, bg_size)
-    and which database cluster to start (block_size, sf).
+    Information about a postgres installation, which uniquely identifies the
+    binary/git worktree that should be used. (but not which database files)
     """
     branch: PgBranch
-    sf: int
     block_size: int = DEFAULT_BLOCK_SIZE
     bg_size: int = DEFAULT_BG_SIZE
-
-    def to_config_key(self) -> ConfigKey:
-        return ConfigKey(sf=self.sf, blk_sz=self.block_size)
-
-    def to_config_map(self) -> dict:
-        return {
-            'branch': self.branch.name,
-            'scalefactor': self.sf,
-            'block_size': self.block_size,
-            'block_group_size': self.bg_size,
-        }
 
     @property
     def builddir(self) -> str:
@@ -191,9 +218,68 @@ class DbConfig:
     def install_path(self) -> Path:
         return POSTGRES_INSTALL_PATH / self.builddir
 
+
+@dataclass(frozen=True)
+class DbData:
+    """
+    Information which uniquely identifies the database data directory to use.
+    """
+    workload: Workload
+    sf: int
+    block_size: int = DEFAULT_BLOCK_SIZE
+
     @property
-    def tpch_data_path(self) -> Path:
-        return self.to_config_key().tpch_data_path
+    def data_path(self) -> Path:
+        return PG_DATA_ROOT / f'pg_{self.workload.name.lower()}_sf{self.sf}_blksz{self.block_size}'
+
+    @property
+    def db_name(self) -> str:
+        return self.workload.db_name(self.sf)
+
+    @property
+    def conn_str(self) -> str:
+        return f'pq://{self.workload.db_host}/{self.db_name}'
+
+
+@dataclass(frozen=True)
+class DbConfig:
+    """
+    Information about the database is configured: branch/code being used, block size,
+    and scale factor. These are used to decide which binaries to use (branch, block_size, bg_size)
+    and which database cluster to start (block_size, sf, workload).
+    """
+    bin: DbBin
+    data: DbData
+
+    @property
+    def branch(self) -> PgBranch:
+        return self.bin.branch
+
+    @property
+    def sf(self) -> int:
+        return self.data.sf
+
+    @property
+    def block_size(self) -> int:
+        return self.bin.block_size
+
+    @property
+    def bg_size(self) -> int:
+        return self.bin.bg_size
+
+    def to_config_key(self) -> ConfigKey:
+        return ConfigKey(sf=self.data.sf, blk_sz=self.bin.block_size)
+
+    def to_config_map(self) -> dict:
+        return {
+            'branch': self.bin.branch.name,
+            'scalefactor': self.data.sf,
+            'block_size': self.bin.block_size,
+            'block_group_size': self.bin.bg_size,
+        }
+
+    def check_consistent(self) -> bool:
+        return self.bin.block_size == self.data.block_size
 
 
 @dataclass
@@ -272,9 +358,11 @@ class ExperimentConfig:
 
         # Create directory for results
         while True:
+            # Directory is workload + time
+            w_str = self.bbconf.workload.workload.name.upper()
             ts = dt.now()
             ts_str = ts.strftime('%Y-%m-%d_%H-%M')
-            res_dir = RESULTS_ROOT / f'TPCH_{ts_str}'
+            res_dir = RESULTS_ROOT / f'{w_str}_{ts_str}'
             try:
                 os.makedirs(res_dir)
                 break
@@ -383,6 +471,7 @@ def clone_pg_repos():
     for branch in POSTGRES_PBM_BRANCHES:
         abs_dir = POSTGRES_SRC_PATH / branch.name
         try:
+            print(f'Creating worktree for: {branch.name} under {abs_dir}')
             pg_repo.git.worktree('add', abs_dir, branch.git_branch)
         except GitCommandError as e:
             print(f'WARNING: got git error while creating worktree for {branch}: {e}')
@@ -417,14 +506,13 @@ def pbm_blk_shift(blk_sz: int, bg_size: int):
     return res
 
 
-# TODO refactor to just take a DbConfig...
-def config_postgres_repo(dbconf: DbConfig):
+def config_postgres_repo(dbbin: DbBin):
     """Runs `./configure` to setup the build for postgres with the provided branch and block size."""
-    build_path = dbconf.build_path
-    install_path = dbconf.install_path
-    brnch = dbconf.branch
-    blk_sz = dbconf.block_size
-    bg_size = dbconf.bg_size
+    build_path = dbbin.build_path
+    install_path = dbbin.install_path
+    brnch = dbbin.branch
+    blk_sz = dbbin.block_size
+    bg_size = dbbin.bg_size
 
     print(f'Configuring postgres {brnch.name} with block size {blk_sz}, block group size {bg_size}')
     build_path.mkdir(exist_ok=True, parents=True)
@@ -461,12 +549,12 @@ def build_postgres_extension(build_path: Path, extension: str):
         raise Exception(f'Got return code {ret} when installing extension {extension}')
 
 
-def build_postgres(dbconf: DbConfig):
+def build_postgres(dbbin: DbBin):
     """Compiles PostgreSQL for the specified branch/block size."""
-    build_path = dbconf.build_path
-    brnch = dbconf.branch
-    blk_sz = dbconf.block_size
-    bg_sz = dbconf.bg_size
+    build_path = dbbin.build_path
+    brnch = dbbin.branch
+    blk_sz = dbbin.block_size
+    bg_sz = dbbin.bg_size
     print(f'Compiling & installing postgres {brnch.name} with block size {blk_sz} and block group size {bg_sz}')
     ret = subprocess.Popen('make', cwd=build_path).wait()
     if ret != 0:
@@ -480,14 +568,14 @@ def build_postgres(dbconf: DbConfig):
         build_postgres_extension(build_path, ext)
 
 
-def clean_postgres(dbconf: DbConfig):
+def clean_postgres(dbbin: DbBin):
     """Clean PostgreSQL build for the specified branch/block size."""
-    build_path = dbconf.build_path
-    brnch = dbconf.branch
-    print(f'Cleaning postgres {brnch.name} with block size {dbconf.block_size} and block group size {dbconf.bg_size}')
+    build_path = dbbin.build_path
+    brnch = dbbin.branch
+    print(f'Cleaning postgres {brnch.name} with block size {dbbin.block_size} and block group size {dbbin.bg_size}')
     ret = subprocess.Popen(['make', 'clean'], cwd=build_path).wait()
     if ret != 0:
-        raise Exception(f'Got return code {ret} when cleaning postgres {brnch.name} with block size={dbconf.block_size}, group size={dbconf.bg_size}')
+        raise Exception(f'Got return code {ret} when cleaning postgres {brnch.name} with block size={dbbin.block_size}, group size={dbbin.bg_size}')
 
 
 def build_benchbase():
@@ -508,8 +596,8 @@ def install_benchbase():
 
 def pg_get_cluster(case: DbConfig) -> Cluster:
     """Return cluster for a local PostgreSQL installation."""
-    pgi = pg.installation.Installation(pg_config_dictionary(case.install_path / 'bin' / 'pg_config'))
-    cl = Cluster(pgi, case.tpch_data_path)
+    pgi = pg.installation.Installation(pg_config_dictionary(case.bin.install_path / 'bin' / 'pg_config'))
+    cl = Cluster(pgi, case.data.data_path)
     return cl
 
 
@@ -550,7 +638,7 @@ def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: Ru
     to the general internet. (in any case, there is nothing on the database except test data)
     """
     local_temp_path = 'temp_pg.conf'
-    remote_path = str(dbconf.tpch_data_path / 'postgresql.conf')
+    remote_path = str(dbconf.data.data_path / 'postgresql.conf')
 
     # print(f'Configuring PostgreSQL on remote host, config file at: {remote_path}')
 
@@ -570,9 +658,9 @@ def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: Ru
 
 def start_remote_postgres(conn: fabric.Connection, case: DbConfig):
     """Start PostgreSQL from the benchmark client machine."""
-    install_path = case.install_path
+    install_path = case.bin.install_path
     pgctl = install_path / 'bin' / 'pg_ctl'
-    data_dir = case.tpch_data_path
+    data_dir = case.data.data_path
     logfile = data_dir / 'logfile'
 
     conn.run(f'truncate --size=0 {logfile}')
@@ -581,35 +669,37 @@ def start_remote_postgres(conn: fabric.Connection, case: DbConfig):
 
 def stop_remote_postgres(conn: fabric.Connection, case: DbConfig):
     """Stop PostgreSQL remotely."""
-    install_path = case.install_path
+    install_path = case.bin.install_path
     pgctl = install_path / 'bin' / 'pg_ctl'
-    data_dir = case.tpch_data_path
+    data_dir = case.data.data_path
 
     conn.run(f'{pgctl} stop -D {data_dir}')
 
 
-def prewarm_lineitem(case: DbConfig):
+def prewarm_lineitem(data: DbData):
     """Prewarm lineitem cache for the given database config (DB must be running)"""
-    conn_str = f'pq://{PG_HOST}/TPCH_{case.sf}'
-    with pg.open(conn_str) as conn:
+    with pg.open(data.conn_str) as conn:
         conn: PgConnection
         conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
         conn.execute('''select pg_prewarm('lineitem');''')
 
 
-def clear_pg_stats(case: DbConfig):
+def clear_pg_stats(data: DbData):
     """Clear IO statistics for the given database config (DB must be running))"""
-    conn_str = f'pq://{PG_HOST}/TPCH_{case.sf}'
-    with pg.open(conn_str) as conn:
+    with pg.open(data.conn_str) as conn:
         conn: PgConnection
         conn.execute('SELECT pg_stat_reset();')
 
 
 def create_bbase_config(sf: int, bb_config: BBaseConfig, out, local=False):
     """Set connection information and scale factor in a BenchBase config file."""
-    tree = ET.parse('bbase_config/sample_tpch_config.xml')
+    tree = ET.parse(bb_config.workload.workload.base_config_file)
+    db_name = bb_config.workload.workload.db_name(sf)
+    app_name = bb_config.workload.workload.name
+    host = 'localhost' if local else bb_config.workload.workload.db_host
+
     params = tree.getroot()
-    params.find('url').text = f'jdbc:postgresql://{"localhost" if local else PG_HOST}:{PG_PORT}/TPCH_{sf}?sslmode=disable&amp;ApplicationName=tpch&amp;reWriteBatchedInserts=true'
+    params.find('url').text = f'jdbc:postgresql://{host}:{PG_PORT}/{db_name}?sslmode=disable&amp;ApplicationName={app_name}&amp;reWriteBatchedInserts=true'
     params.find('username').text = PG_USER
     params.find('password').text = PG_PASSWD
     params.find('scalefactor').text = str(sf)
@@ -630,62 +720,72 @@ def create_bbase_config(sf: int, bb_config: BBaseConfig, out, local=False):
         works.remove(elem)
 
     work = ET.SubElement(works, 'work')
+
     ET.SubElement(work, 'serial').text = 'false'
-    ET.SubElement(work, 'rate').text = 'unlimited'
-    ET.SubElement(work, 'arrival').text = 'regular'
-    # ET.SubElement(work, 'warmup').text = '0'
     bb_config.workload.write_bbase_config(work)
 
     tree.write(out)
 
 
-def run_bbase_load(config):
+def run_bbase_load(b: str, config: Path, create=False):
     """Run BenchBase to load data with the given config file path."""
+
+    ops = ['--load=true']
+    if create:
+        ops.append('--create=true')
+
     subprocess.Popen([
         'java',
         '-jar', str(BENCHBASE_INSTALL_PATH / 'benchbase-postgres' / 'benchbase.jar'),
-        '-b', 'tpch',
+        '-b', b,
         '-c', str(config),
-        '--load=true',
+        *ops,
     ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
 
 
 def run_bbase_test(exp: ExperimentConfig):
-    """Run benchbase (on local machine) against PostgreSQL on the remote host.
+    """
+    Run benchbase (on local machine) against PostgreSQL on the remote host.
     Will start & stop PostgreSQL on the remote host.
     """
     dbconf = exp.dbconf
     bbconf = exp.bbconf
     pgconf = exp.pgconf
 
-    temp_bbase_config = BUILD_ROOT / 'bbase_tpch_config.xml'
+    db_host = bbconf.workload.workload.db_host
+    bb_workload_name = bbconf.workload.workload.name.lower()
+    temp_bbase_config = BUILD_ROOT / f'bbase_{bb_workload_name}_config.xml'
+
+    # sanity checks
+    assert dbconf.check_consistent(), "Error with the DB configuration!"
+    assert bbconf.workload.workload == dbconf.data.workload, "BB config and DB confid have different workloads!"
 
     create_bbase_config(dbconf.sf, bbconf, temp_bbase_config)
 
-    with FabConnection(PG_HOST) as conn:
+    with FabConnection(db_host) as conn:
         config_remote_postgres(conn, dbconf, pgconf)
         start_remote_postgres(conn, dbconf)
 
     try:
-        # prewarm lineitem table if desired
-        if bbconf.prewarm:
+        # prewarm lineitem table if desired (TPCH only)
+        if bbconf.prewarm and bbconf.workload.workload is TPCH:
             print(f'Pre-warming cache for lineitem table...')
-            prewarm_lineitem(dbconf)
+            prewarm_lineitem(dbconf.data)
 
         # Clear statistics on remote postgres
-        clear_pg_stats(dbconf)
+        clear_pg_stats(dbconf.data)
 
         # Run benchbase
         subprocess.Popen([
             'java',
             '-jar', str(BENCHBASE_INSTALL_PATH / 'benchbase-postgres' / 'benchbase.jar'),
-            '-b', 'tpch',
+            '-b', bb_workload_name,
             '-c', str(temp_bbase_config),
             '--execute=true',
             '-d', str(exp.results_bbase_subdir),
         ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
     finally:
-        with FabConnection(PG_HOST) as conn:
+        with FabConnection(db_host) as conn:
             stop_remote_postgres(conn, dbconf)
 
 
@@ -695,11 +795,12 @@ def pg_exec_file(conn: PgConnection, file):
     conn.execute(stmts)
 
 
-def create_and_populate_local_db(case: DbConfig):
-    """Initialize a database for the given test case.
+def create_and_populate_tpch_local(case: DbConfig):
+    """
+    Initialize a database with TPCH data for the given test case.
     Note: we only need to initialize for the base branch since each branch can use the same data dir
     """
-    db_name = f'TPCH_{case.sf}'
+    db_name = case.data.db_name
     create_ddl_file = 'ddl/create-tables-noindex.sql'
     conn_str = f'pq://localhost/{db_name}'
 
@@ -712,7 +813,7 @@ def create_and_populate_local_db(case: DbConfig):
     print(f'Starting cluster and creating database {db_name} with tables (defined in {create_ddl_file}) on local host...')
     pg_start_db(cl)
     try:
-        subprocess.run([case.install_path / 'bin' / 'createdb', db_name])
+        subprocess.run([case.bin.install_path / 'bin' / 'createdb', db_name])
         with pg.open(conn_str) as conn:
             conn: PgConnection  # explicitly set type hint since type deduction fails here...
             pg_exec_file(conn, create_ddl_file)
@@ -724,9 +825,9 @@ def create_and_populate_local_db(case: DbConfig):
 
         print(f'BenchBase: loading test data...')
         bbase_config_file = BUILD_ROOT / 'load_config.xml'
-        bbconf = BBaseConfig(nworkers=1, workload=WORKLOADS_MAP['tpch_w'])
+        bbconf = BBaseConfig(nworkers=1, workload=WORKLOAD_TPCH_WEIGHTS)
         create_bbase_config(case.sf, bbconf, bbase_config_file, local=True)
-        run_bbase_load(bbase_config_file)
+        run_bbase_load('tpch', bbase_config_file)
 
         # Re-enable vacuum after loading is complete
         with pg.open(conn_str) as conn:
@@ -744,6 +845,65 @@ def create_and_populate_local_db(case: DbConfig):
     finally:
         print(f'Shutting down database cluster {cl.data_directory}...')
         pg_stop_db(cl)
+
+
+def tpcc_src_data_dir(case: DbConfig) -> Path:
+    """Name of directory to copy TPCC data so we can copy it instead of re-generating every time."""
+    return PG_DATA_ROOT / f'src_tpcc_sf{case.sf}_blksz{case.block_size}'
+
+
+def create_and_populate_tpcc_local(case: DbConfig):
+    """
+    Initialize a database with TPCC data for the given test case.
+    Note: we only need to initialize for the base branch since each branch can use the same data dir
+    """
+    db_name = f'TPCC_{case.sf}'
+    conn_str = f'pq://localhost/{db_name}'
+
+    cl = pg_get_cluster(case)
+
+    print(f'(Re-)Initializing database cluster at {cl.data_directory}...')
+    shutil.rmtree(cl.data_directory, ignore_errors=True)
+    pg_init_local_db(cl)
+
+    print(f'Starting cluster for benchbase load {db_name}')
+    pg_start_db(cl)
+    try:
+        subprocess.run([case.bin.install_path / 'bin' / 'createdb', db_name])
+
+        print(f'BenchBase: loading test data...')
+        bbase_config_file = BUILD_ROOT / 'load_config.xml'
+        bbconf = BBaseConfig(nworkers=1, workload=WORKLOAD_TPCC)
+        create_bbase_config(case.sf, bbconf, bbase_config_file, local=True)
+        run_bbase_load('tpcc', bbase_config_file, create=True)
+
+        # Run ANALYZE to make sure stats are up-to-date, and CHECKPOINT to clear out the WAL
+        with pg.open(conn_str) as conn:
+            conn.execute('ANALYZE;')
+            conn.execute('CHECKPOINT;')
+
+    finally:
+        print(f'Shutting down database cluster {cl.data_directory}...')
+        pg_stop_db(cl)
+
+    # Rename the database file. TPCC modifies the database, so we need a way to
+    # reset at the start of each test.
+    alt_dir = tpcc_src_data_dir(case)
+    print(f'Moving {cl.data_directory} to {alt_dir}...')
+
+    shutil.rmtree(alt_dir, ignore_errors=True)
+    shutil.move(cl.data_directory, alt_dir)
+
+
+def tpcc_restore_data_dir(case: DbConfig):
+    """Copy the TPCC data directory back into place on the remote host."""
+    data_dir = case.data.data_path
+    src_dir = tpcc_src_data_dir(case)
+
+    print(f'Restoring TPCC database files: copying {src_dir} to {data_dir}...')
+    with FabConnection(case.data.workload.db_host) as fabconn:
+        fabconn.run(f'rm --recursive --force {data_dir}')  # --force to ignore error if it is already not there
+        fabconn.run(f'cp --recursive {src_dir} {data_dir}')
 
 
 def create_indexes(conn: PgConnection, index_dir: str, blk_sz: int):
@@ -829,17 +989,20 @@ def read_constraints_indexes(pgconn: PgConnection):
     return constraints, indexes
 
 
-def setup_indexes_cluster(blk_sz: int, sf: int, *, prev: DbSetup, new: DbSetup):
+def setup_indexes_cluster_tpch(blk_sz: int, sf: int, *, prev: DbSetup, new: DbSetup):
     """Change indexes and clustering on the database. Remembers the changes in `last_config.json`"""
+    db_host = PG_HOST_TPCH
 
-    with FabConnection(PG_HOST) as fabconn:
-        dbconf = DbConfig(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz, sf=sf)
+    with FabConnection(db_host) as fabconn:
+        dbbin = DbBin(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz)
+        dbdata = DbData(workload=TPCH, sf=sf, block_size=blk_sz)
+        dbconf = DbConfig(bin=dbbin, data=dbdata)
         # Use large amount of memory for creating indexes
         config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'))
         start_remote_postgres(fabconn, dbconf)
 
         try:
-            with pg.open(f'pq://{PG_HOST}/TPCH_{sf}') as pgconn:
+            with pg.open(f'pq://{db_host}/TPCH_{sf}') as pgconn:
                 reconfigure_indexes(pgconn, blk_sz, prev_indexes=prev.indexes, new_indexes=new.indexes)
                 reconfigure_clustering(pgconn, prev_cluster=prev.clustering, new_cluster=new.clustering or prev.clustering)
 
@@ -865,16 +1028,16 @@ def one_time_pg_setup():
     # Compile postgres for each different version
 
     for blk_sz in PG_BLK_SIZES:
-        dbconf = DbConfig(BRANCH_POSTGRES_BASE, sf=0, block_size=blk_sz)
-        config_postgres_repo(dbconf)
-        build_postgres(dbconf)
+        dbbin = DbBin(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz)
+        config_postgres_repo(dbbin)
+        build_postgres(dbbin)
 
     for brnch in POSTGRES_PBM_BRANCHES:
         for blk_sz in PG_BLK_SIZES:
             for bg_size in BLOCK_GROUP_SIZES:
-                dbconf = DbConfig(brnch, sf=0, block_size=blk_sz, bg_size=bg_size)
-                config_postgres_repo(dbconf)
-                build_postgres(dbconf)
+                dbbin = DbBin(branch=brnch, block_size=blk_sz, bg_size=bg_size)
+                config_postgres_repo(dbbin)
+                build_postgres(dbbin)
 
 
 def refresh_pg_installs():
@@ -907,10 +1070,12 @@ def refresh_pg_installs():
                 (src_path / 'bufmgr.c').touch(exist_ok=True)
 
                 for bg_size in BLOCK_GROUP_SIZES:
-                    build_postgres(DbConfig(brnch, 0, block_size=blk_sz, bg_size=bg_size))
+                    dbbin = DbBin(brnch, block_size=blk_sz, bg_size=bg_size)
+                    build_postgres(dbbin)
 
             else:
-                build_postgres(DbConfig(brnch, 0, block_size=blk_sz))
+                dbbin = DbBin(brnch, block_size=blk_sz)
+                build_postgres(dbbin)
 
 
 def clean_pg_installs(base=False):
@@ -922,9 +1087,11 @@ def clean_pg_installs(base=False):
         for blk_sz in PG_BLK_SIZES:
             if brnch.is_pbm:
                 for bg_sz in BLOCK_GROUP_SIZES:
-                    clean_postgres(DbConfig(brnch, sf=0, block_size=blk_sz, bg_size=bg_sz))
+                    dbbin = DbBin(brnch, block_size=blk_sz, bg_size=bg_sz)
+                    clean_postgres(dbbin)
             elif base:
-                clean_postgres(DbConfig(brnch, sf=0, block_size=blk_sz))
+                dbbin = DbBin(brnch, block_size=blk_sz)
+                clean_postgres(dbbin)
 
 
 def one_time_benchbase_setup():
@@ -935,31 +1102,52 @@ def one_time_benchbase_setup():
     install_benchbase()
 
 
-def gen_test_data(sf: int, blk_sz: int):
+def gen_data_tpch(sf: int, blk_sz: int):
     if sf is None:
         raise Exception(f'Must specify scale factor when loading data!')
 
     # Generate test data (only base branch is needed for generating data)
     print('--------------------------------------------------------------------------------')
-    print(f'---- Initializing data for blk_sz={blk_sz}, sf={sf}')
+    print(f'---- Initializing TPCH data for blk_sz={blk_sz}, sf={sf}')
     print('--------------------------------------------------------------------------------')
-    dbconf = DbConfig(BRANCH_POSTGRES_BASE, block_size=blk_sz, sf=sf)
-    create_and_populate_local_db(dbconf)
+    dbbin = DbBin(BRANCH_POSTGRES_BASE, block_size=blk_sz)
+    dbdata = DbData(TPCH, sf=sf, block_size=blk_sz)
+    dbconf = DbConfig(dbbin, dbdata)
+    create_and_populate_tpch_local(dbconf)
 
 
-def drop_all_indexes(sf: int, blk_sz: int):
+def gen_data_tpcc(sf: int, blk_sz: int):
+    if sf is None:
+        raise Exception(f'Must specify scale factor (# of warehouses) when loading data!')
+
+    # Generate test data (only base branch is needed for generating data)
+    print('--------------------------------------------------------------------------------')
+    print(f'---- Initializing TPCC data for blk_sz={blk_sz}, sf={sf}')
+    print('--------------------------------------------------------------------------------')
+    dbbin = DbBin(BRANCH_POSTGRES_BASE, block_size=blk_sz)
+    dbdata = DbData(TPCC, sf=sf, block_size=blk_sz)
+    dbconf = DbConfig(dbbin, dbdata)
+    create_and_populate_tpcc_local(dbconf)
+
+
+def drop_all_indexes_tpch(sf: int, blk_sz: int):
     """Drop all indexes and constraints. More powerful cleanup function if something goes really wrong."""
     if sf is None:
         raise Exception(f'Must specify scale factor of databases to clean up!')
 
-    print(f'~~~~~~~~~~ Dropping all indexes and constraints for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
-    dbconf = DbConfig(BRANCH_POSTGRES_BASE, block_size=blk_sz, sf=sf)
-    with FabConnection(PG_HOST) as fabconn:
+    db_host = TPCH.db_host
+
+    print(f'~~~~~~~~~~ Dropping all indexes and constraints for TPCH blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
+
+    dbbin = DbBin(BRANCH_POSTGRES_BASE, block_size=blk_sz)
+    dbdata = DbData(TPCH, sf=sf, block_size=blk_sz)
+    dbconf = DbConfig(dbbin, dbdata)
+    with FabConnection(db_host) as fabconn:
         config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'))
         start_remote_postgres(fabconn, dbconf)
 
         try:
-            with pg.open(f'pq://{PG_HOST}/TPCH_{sf}') as pgconn:
+            with pg.open(dbdata.conn_str) as pgconn:
                 # find and drop constraints
                 all_constraints = pgconn.query("""
                     select conrelid::regclass as table, conname as constraint
@@ -1017,7 +1205,7 @@ def reindex(args):
     new_setup = DbSetup(indexes=new_indexes, clustering=new_cluster)
 
     print(f'~~~~~~~~~~ Reconfiguring using indexes {new_indexes}, clustering {new_cluster} for blk_sz={args.blk_sz}, sf={args.sf} ~~~~~~~~~~')
-    setup_indexes_cluster(args.blk_sz, args.sf, prev=prev_setup, new=new_setup)
+    setup_indexes_cluster_tpch(args.blk_sz, args.sf, prev=prev_setup, new=new_setup)
 
 
 def run_experiment(experiment: str, exp_config: ExperimentConfig):
@@ -1028,10 +1216,15 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
 
     sf = dbconf.sf
     blk_sz = dbconf.block_size
+    is_tpch = (bbconf.workload.workload is TPCH)
 
     # Check current status of indexes & clustering in the database
-    prev_setup: DbSetup = get_last_config(dbconf)
-    dbsetup = dbsetup.update_with_old(prev_setup)
+    if is_tpch:
+        prev_setup: DbSetup = get_last_config(dbconf)
+        dbsetup = dbsetup.update_with_old(prev_setup)
+        dbsetup_dict = asdict(dbsetup)
+    else:
+        dbsetup_dict = {}
 
     # Write configuration to a file
     with open(exp_config.results_dir / CONFIG_FILE_NAME, 'w') as f:
@@ -1041,7 +1234,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
             **dbconf.to_config_map(),
             **asdict(pgconf),
             **bbconf.to_config_map(),
-            **asdict(dbsetup),
+            **dbsetup_dict,
         }
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(config))
         f.write('\n')  # ensure trailing newline
@@ -1057,11 +1250,16 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     # print(f'==   Block size:            {blk_sz} KiB')
     # print(f'==   Block group size       {dbconf.bg_size} KiB')
     # print(f'==   Workload:              {bbconf.workload.workname}')
-    # print(f'==   Time:                  {BBASE_TIME // 60} min{"" if BBASE_TIME % 60 == 0 else " " + str(BBASE_TIME % 60) + " s"}')
-    print(f'==   Shared memory:         {pgconf.shared_buffers}')
     # print(f'==   Worker memory          {PG_WORK_MEM}')
-    print(f'==   Index definitions:     ddl/index/{dbsetup.indexes}/')
-    print(f'==   Clustering:            dd/cluster/{dbsetup.clustering}.sql')
+    print(f'==   Shared memory:         {pgconf.shared_buffers}')
+    if is_tpch:
+        print(f'==   Index definitions:     ddl/index/{dbsetup.indexes}/')
+        print(f'==   Clustering:            dd/cluster/{dbsetup.clustering}.sql')
+    if isinstance(bbconf.workload, WeightedWorkloadConfig):
+        t = bbconf.workload.time_s
+        s = t % 60
+        s = '' if s == 0 else f' {s} s'
+        print(f'==   Time:                  {t // 60} min{s}')
     print(f'==   Terminals:             {bbconf.nworkers}')
     # print(f'==   SyncScans:             {pgconf.synchronize_seqscans}')
     # print(f'==   Prewarm:               {bbconf.prewarm}')
@@ -1069,19 +1267,23 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     print(f'== Storing results to {results_dir}')
     print(f'======================================================================')
 
-    # Make sure we have the desired indexes & clustering
-    print(f'~~~~~~~~~~ Setup indexes={dbsetup.indexes}, clustering={dbsetup.clustering} for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
-    constraints, indexes = setup_indexes_cluster(blk_sz, sf,
-                                                 prev=prev_setup, new=dbsetup)
+    if is_tpch:
+        # Make sure we have the desired indexes & clustering if applicable
+        print(f'~~~~~~~~~~ Setup indexes={dbsetup.indexes}, clustering={dbsetup.clustering} for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
+        constraints, indexes = setup_indexes_cluster_tpch(blk_sz, sf,
+                                                          prev=prev_setup, new=dbsetup)
 
-    # remember when indexes and constraints are defined in case we want to double check later...
-    with open(results_dir / CONSTRAINTS_FILE, 'w') as f:
-        constraints.to_csv(f, index=False)
+        # remember when indexes and constraints are defined in case we want to double check later...
+        with open(results_dir / CONSTRAINTS_FILE, 'w') as f:
+            constraints.to_csv(f, index=False)
 
-    with open(results_dir / INDEXES_FILE, 'w') as f:
-        indexes.to_csv(f, index=False)
+        with open(results_dir / INDEXES_FILE, 'w') as f:
+            indexes.to_csv(f, index=False)
 
-    print(f'~~~~~~~~~~ Index and clustering setup done! Running the real tests... ~~~~~~~~~~')
+        print(f'~~~~~~~~~~ Index and clustering setup done! Running the real tests... ~~~~~~~~~~')
+    else:
+        # for TPCC: need to copy the database file!
+        tpcc_restore_data_dir(dbconf)
 
     # Actually run the tests
     run_bbase_test(exp_config)
@@ -1121,7 +1323,9 @@ def run_bench(args):
         pbm_evict_num_samples=num_samples,
     )
 
-    dbconf = DbConfig(branch, block_size=args.blk_sz, bg_size=args.bg_sz, sf=args.sf)
+    dbbin = DbBin(branch, block_size=args.blk_sz, bg_size=args.bg_sz)
+    dbdata = DbData(workload.workload, sf=sf, block_size=args.blk_sz)
+    dbconf = DbConfig(dbbin, dbdata)
     dbsetup = DbSetup(indexes=args.index_type,
                       clustering=args.cluster)
     bbconf = BBaseConfig(nworkers=args.parallelism, workload=workload, prewarm=args.prewarm)
