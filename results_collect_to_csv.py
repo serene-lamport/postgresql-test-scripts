@@ -3,6 +3,8 @@
 import os
 import json
 import csv
+import sys
+from pathlib import Path
 from typing import Optional
 
 from lib.config import *
@@ -37,7 +39,7 @@ csv_cols = [
     # latency from benchbase summary:
     *bbase_latency_cols,
     # stats from metrics
-    'average_stream_s',
+    'average_stream_s', 'max_stream_s',
     *statio_main_cols,
     *('lineitem_' + col for col in statio_main_cols),
     'hit_rate', 'lineitem_hit_rate',
@@ -91,7 +93,12 @@ def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
     lineitem_total_reads = metrics_totals['lineitem_heap_blks_read'] + metrics_totals['lineitem_idx_blks_read']
 
     metrics_totals['hit_rate'] = total_hits / (total_hits + total_reads)
-    metrics_totals['lineitem_hit_rate'] = lineitem_total_hits / (lineitem_total_hits + lineitem_total_reads)
+
+    if lineitem_total_hits > 0:
+        metrics_totals['lineitem_hit_rate'] = lineitem_total_hits / (lineitem_total_hits + lineitem_total_reads)
+    else:
+        # make sure it has a value so this column has float datatype in pandas
+        metrics_totals['lineitem_hit_rate'] = 0.
     # Compute amount of data read/processed
     # blk_sz is in KiB, not bytes, so conversion rate is 2^20 to get to GiB
     metrics_totals['data_read_gb'] = total_reads * blk_sz / (2**20)
@@ -100,7 +107,7 @@ def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
     return metrics_totals
 
 
-def collect_results_to_csv():
+def collect_results_to_csv(res_dir: Path):
     decoder = json.JSONDecoder()
     json_decode = decoder.decode
 
@@ -112,7 +119,7 @@ def collect_results_to_csv():
 
     # Process everythign in the results directory
     conf_dir: str
-    for conf_dir in os.listdir(RESULTS_ROOT):
+    for conf_dir in os.listdir(res_dir):
 
         # read config file if it is there
         config = read_config(conf_dir)
@@ -122,7 +129,7 @@ def collect_results_to_csv():
             continue
 
         # each directory is a different run of benchbase
-        subdirs = [subdir for subdir in os.listdir(RESULTS_ROOT / conf_dir) if subdir not in NON_DIR_RESULTS]
+        subdirs = [subdir for subdir in os.listdir(res_dir / conf_dir) if subdir not in NON_DIR_RESULTS]
         pgconfigs = [subdir.split('_blksz') for subdir in subdirs]
         try:
             pgconfigs = [(s[0], int(s[1])) for s in pgconfigs]
@@ -132,7 +139,7 @@ def collect_results_to_csv():
 
         try:
             for brnch, blk_sz in pgconfigs:
-                subdir = RESULTS_ROOT / conf_dir / f'{brnch}_blksz{blk_sz}'
+                subdir = res_dir / conf_dir / f'{brnch}_blksz{blk_sz}'
 
                 # Process benchbase output:
                 with open(subdir / 'metrics.json', 'r') as metrics_file:
@@ -154,6 +161,7 @@ def collect_results_to_csv():
                     'block size': blk_sz,
                     # compute average stream time (stream times are microseconds)
                     'average_stream_s': sum(stream_times) / len(stream_times) / (10**6) if stream_times else None,
+                    'max_stream_s': max(stream_times) / (10**6) if stream_times else None,
                     **config,
                     **summary,
                     **summary['Latency Distribution'],
@@ -172,4 +180,7 @@ def collect_results_to_csv():
 
 
 if __name__ == '__main__':
-    collect_results_to_csv()
+    res_dir = RESULTS_ROOT
+    if len(sys.argv) > 1:
+        res_dir = Path(sys.argv[1])
+    collect_results_to_csv(res_dir)

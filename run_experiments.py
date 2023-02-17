@@ -121,7 +121,7 @@ def test_micro_shared_memory(seed: int, parallelism=8) -> Iterable[ExperimentCon
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
-def test_micro_parallelism() -> Iterable[ExperimentConfig]:
+def test_micro_parallelism_constant_nqueries() -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
     dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
@@ -146,19 +146,24 @@ def test_micro_parallelism() -> Iterable[ExperimentConfig]:
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
-def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[ExperimentConfig]:
+def test_micro_parallelism(seed: Optional[int], selectivity: Optional[float], *,
+                           cm=8, parallel_ops: List[int] = None, nsamples: List[int] = None) \
+        -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
     dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
     shmem = '2GB'
-    cm = 8  # 16 queries per stream
-    parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
-    nsamples = [1, 2, 5, 10, 20]
+    if parallel_ops is None:
+        parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
+    if nsamples is None:
+        nsamples = [1, 2, 5, 10, 20]
+    if seed is None:
+        seed = 12345  # default seed
 
     for nworkers, branch in product(parallel_ops, POSTGRES_ALL_BRANCHES):
         dbbin = DbBin(branch)
         dbconf = DbConfig(dbbin, dbdata)
-        bbconf = BBaseConfig(nworkers=nworkers,
+        bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
                              workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm).with_selectivity(selectivity))
 
         for ns in branch_samples(branch, nsamples):
@@ -169,29 +174,12 @@ def test_micro_parallelism_same_stream_size(selectivity: float) -> Iterable[Expe
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
-def test_WHY_SPIKE(seed: int, parallel_ops=None) -> Iterable[ExperimentConfig]:
-    dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
-    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
+def test_micro_parallelism_with_selectivity(selectivity: float) -> Iterable[ExperimentConfig]:
+    return test_micro_parallelism(None, selectivity)
 
-    shmem = '2GB'
-    cm = 6  # 12 queries per stream
-    if parallel_ops is None:
-        parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
-    # nsamples = [1, 2, 5, 10, 20]
-    nsamples = [1, 5, 10]
 
-    for nworkers, branch in product(parallel_ops, POSTGRES_ALL_BRANCHES):
-        dbbin = DbBin(branch)
-        dbconf = DbConfig(dbbin, dbdata)
-        bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
-                             workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm))
-
-        for ns in branch_samples(branch, nsamples):
-            pgconf = RuntimePgConfig(shared_buffers=shmem,
-                                     pbm_evict_num_samples=ns,
-                                     synchronize_seqscans='on')
-
-            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
+def test_micro_parallelism_same_stream_count(seed: int, parallel_ops=None) -> Iterable[ExperimentConfig]:
+    return test_micro_parallelism(seed, None, cm=6, parallel_ops=parallel_ops, nsamples=[1, 5, 10])
 
 
 def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], dry=True):
@@ -229,5 +217,8 @@ if __name__ == '__main__':
 
     # re-run part which failed...
     # rerun_failed(43, 'buffer_sizes_p16_1', test_micro_shared_memory(15858, parallelism=16))
+
+    for s in [21473, 25796, 11251, 28834, 16400]:
+        run_tests('parallelism_sel30_1', test_micro_parallelism(s, 0.3, cm=6, nsamples=[1, 5, 10]))
 
     ...

@@ -124,10 +124,10 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
 
 
 def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
-             x, xlabels=None, logx=False, xlabel=None,
-             y, ybound=None, ylabel=None,  avg_y_values=False,
-             group: Union[str, Sequence[str]] = ('branch', 'pbm_evict_num_samples'),
-             title=None):
+                x, xlabels=None, logx=False, xlabel=None,
+                y, ybound=None, ylabel=None,  avg_y_values=False,
+                group: Union[str, Sequence[str]] = ('branch', 'pbm_evict_num_samples'),
+                title=None):
     df_exp = df[df.experiment == exp]
 
     if isinstance(group, Sequence):
@@ -143,8 +143,8 @@ def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
         xlabs = list(OrderedDict.fromkeys(df_exp[xlabels]))
 
         pl = pl.scale(x=so.Continuous()
-               .tick(locator=FixedLocator(xvals))
-               .label(formatter=FixedFormatter(xlabs)))
+                        .tick(locator=FixedLocator(xvals))
+                        .label(formatter=FixedFormatter(xlabs)))
 
     # TODO how to log scale?
     # TODO can use "nominal" to work around the issue... (but make sure to sort when passing to the locator)
@@ -204,10 +204,16 @@ def main(df: pd.DataFrame):
 
         # microbenchmarks varying the buffer size, with and without prewarm
         # plot_exp(df[df.prewarm == True], 'buffer_sizes_4', group=['branch', 'pbm_evict_num_samples'],
-        plot_exp(df[(df.prewarm == True)], 'buffer_sizes_4', group=['branch', 'pbm_evict_num_samples'],
-                 x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
-                 y='hit_rate', ylabel='hit rate', ybound=(0,1), avg_y_values=True,
-                 title='Hit-rate vs shared buffer size with pre-warming (averaged)'),
+        # plot_exp(df[(df.prewarm == True) & (df.parallelism == 8)], 'buffer_sizes_4',
+        #          group=['branch', 'pbm_evict_num_samples'],
+        #          x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #          y='hit_rate', ylabel='hit rate', ybound=(0,1), avg_y_values=True,
+        #          title='Hit-rate vs shared buffer size with (averaged, parallelism = 8)'),
+        # plot_exp(df[(df.prewarm == True) & (df.parallelism == 16)], 'buffer_sizes_4',
+        #          group=['branch', 'pbm_evict_num_samples'],
+        #          x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+        #          y='hit_rate', ylabel='hit rate', ybound=(0,1), avg_y_values=True,
+        #          title='Hit-rate vs shared buffer size with (averaged, parallelism = 16)'),
         # plot_exp(df[df.prewarm == False], 'buffer_sizes_4', group=['branch', 'pbm_evict_num_samples'],
         # plot_exp(df[(df.prewarm == False)], 'buffer_sizes_4', group=['branch', 'pbm_evict_num_samples'],
         #          x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
@@ -249,22 +255,67 @@ def main(df: pd.DataFrame):
     #              y='hit_rate', ylabel='hit rate', ybound=(0, 1),
     #              title=f'{sel}% selectivity hit_rate vs parallelism')
 
-    # TODO ^ plot the same thing with average_stream_s (?) instead of throughput?
-    # TODO figure out the weird spike!
-
     # plot_exp(df, 'test_weird_spike_1', group=['branch', 'pbm_evict_num_samples'],
     #          x='parallelism', xsort=True, xlabel='Parallelism',
     #          y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
     #          title='averaged hit_rate vs parallelism 1')
 
-    plot_exp(df, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
-             x='parallelism', xsort=True, xlabel='Parallelism',
-             y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
-             title='averaged hit_rate vs parallelism 2')
-    plot_exp_sb(df, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
-                x='parallelism', xlabel='Parallelism',  # xsort=True,
-                y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
-                title='averaged hit_rate vs parallelism 2')
+
+    # hit-rate as a function of buffer size for different configurations
+    # for nsamples in ['2', '5', '10', '20']:
+    # for nsamples in ['5', '10', '20']:
+    #     f, ax = plt.subplots(1, 2)
+    #     df_filtered = df[df.pbm_evict_num_samples.isin(['', '1', nsamples]) & (df.prewarm == True)]
+    #     plot_exp(df_filtered, 'buffer_sizes_4', ax=ax[0],
+    #              group=['branch', 'pbm_evict_num_samples'],
+    #              x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+    #              y='hit_rate', ylabel='hit rate', ybound=(0,1), avg_y_values=True,
+    #              title=f'parallelism = 8, samples = {nsamples}'),
+    #     plot_exp(df_filtered, 'buffer_sizes_p16_1', ax=ax[1],
+    #              group=['branch', 'pbm_evict_num_samples'],
+    #              x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+    #              y='hit_rate', ylabel='hit rate', ybound=(0,1), avg_y_values=True,
+    #              title=f'parallelism = 16, samples = {nsamples}'),
+    #     f.suptitle(f'Hit-rate vs shared buffer size (samples = {nsamples})')
+    #
+    # for nsamples in ['5', '10']:
+    #     f, ax = plt.subplots(1, 2)
+    #     df_filtered = df[df.pbm_evict_num_samples.isin(['', '1', nsamples]) & (df.prewarm == True)]
+    #     plot_exp(df_filtered, 'buffer_sizes_4', ax=ax[0],
+    #              group=['branch', 'pbm_evict_num_samples'],
+    #              x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+    #              y='average_stream_s', ylabel='Average stream time', avg_y_values=True,
+    #              title=f'parallelism = 8, samples = {nsamples}'),
+    #     plot_exp(df_filtered, 'buffer_sizes_p16_1', ax=ax[1],
+    #              group=['branch', 'pbm_evict_num_samples'],
+    #              x='shmem_mb', xsort=True, xlabels='shared_buffers', logx=True, xlabel='shared memory',
+    #              y='average_stream_s', ylabel='Average stream time', avg_y_values=True,
+    #              title=f'parallelism = 16, samples = {nsamples}'),
+    #     f.suptitle(f'Average stream time vs shared buffer size (samples = {nsamples})')
+    #
+    # for nsamples in ['5', '10']:
+    #     df_filtered = df[df.pbm_evict_num_samples.isin(['', '1', nsamples])]
+    #     plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+    #              x='parallelism', xsort=True, xlabel='Parallelism',
+    #              y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
+    #              title=f'averaged hit_rate vs parallelism (samples = {nsamples})')
+    #     # plot_exp_sb(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+    #     #             x='parallelism', xlabel='Parallelism',  # xsort=True,
+    #     #             y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
+    #     #             title=f'averaged hit_rate vs parallelism')
+    #
+    # for nsamples in ['5', '10']:
+    #     df_filtered = df[df.pbm_evict_num_samples.isin(['', '1', nsamples])]
+    #     plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+    #              x='parallelism', xsort=True, xlabel='Parallelism',
+    #              y='average_stream_s', ylabel='Average stream time', avg_y_values=True,
+    #              title=f'Average stream time vs parallelism (samples = {nsamples})')
+    #     plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+    #              x='parallelism', xsort=True, xlabel='Parallelism',
+    #              y='max_stream_s', ylabel='Max stream time', avg_y_values=True,
+    #              title=f'Max stream time vs parallelism (samples = {nsamples})')
+
+
     #
     # f, axs = plt.subplots(2, 3)
     # for i, s in enumerate([16312, 22289, 16987, 6262, 32495, 5786]):
@@ -273,6 +324,33 @@ def main(df: pd.DataFrame):
     #              x='parallelism', xsort=True, xlabel='Parallelism',
     #              y='hit_rate', ylabel='hit rate', ybound=(0, 1),
     #              title=f'hit_rate vs parallelism seed={s}')
+
+
+    # data processed/read per second/stream
+    # for nsamples in ['5', '10']:
+    for nsamples in ['10']:
+        df_filtered = df[df.pbm_evict_num_samples.isin(['', '1', nsamples]) & (df.branch != 'pbm3')]
+        plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='data_read_per_stream', ylabel='Data read/stream (GB)', avg_y_values=True,
+                 title=f'Data read per stream vs parallelism (samples = {nsamples})')
+        plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='data_processed_per_stream', ylabel='Data processed/stream (GB)', avg_y_values=True,
+                 title=f'Data processed per stream vs parallelism (samples = {nsamples})')
+        plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='data_read_per_s', ylabel='Data read/s (GB)', avg_y_values=True,
+                 title=f'Data read per second vs parallelism (samples = {nsamples})')
+        plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
+                 x='parallelism', xsort=True, xlabel='Parallelism',
+                 y='data_processed_per_s', ylabel='Data processed/s (GB)', avg_y_values=True,
+                 title=f'Data processed per second vs parallelism (samples = {nsamples})')
+
+
+
+
+
 
     print(f'Showing plots...')
     plt.show()
@@ -290,15 +368,18 @@ if __name__ == '__main__':
 
     # Convert shared buffers config to numbers for plotting
     df['shmem_mb'] = df['shared_buffers'].map(to_mb)
-    df['data_per_stream'] = df.data_read_gb / df.parallelism
+    df['data_read_per_stream'] = df.data_read_gb / df.parallelism
+    df['data_processed_per_stream'] = df.data_processed_gb / df.parallelism
+    df['data_read_per_s'] = df.data_read_gb / df.max_stream_s
+    df['data_processed_per_s'] = df.data_processed_gb / df.max_stream_s
 
     df, plots = main(df)
 
 
 # TESTING
-if False:
-# if True:
-
+TESTING = False
+# TESTING = True
+if TESTING:
     df = pd.DataFrame({
         'x': [
             1, 1, 1,
