@@ -680,7 +680,7 @@ def stop_remote_postgres(conn: fabric.Connection, case: DbConfig):
 def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
     """Get disk stats (sectors_read, sectors_written) of the remote host"""
     dev = case.data.workload.device
-    res = conn.run(f'cat /sys/blk/{dev}/stat', hide=True).stdout.split()
+    res = conn.run(f'cat /sys/block/{dev}/stat', hide=True).stdout.split()
     return int(res[2]), int(res[6])
 
 

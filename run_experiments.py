@@ -187,15 +187,15 @@ def test_large_mem(seed: int) -> Iterable[ExperimentConfig]:
     dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=100)
     bbconf = BBaseConfig(nworkers=4, seed=seed, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(1).with_selectivity(0.5))
     shmem = '28GB'
+    nsamples = [5, 10]
 
     for branch in [BRANCH_PBM1, BRANCH_PBM2, BRANCH_POSTGRES_BASE]:
-        pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=10 if branch.accepts_nsamples else None)
         dbbin = DbBin(branch)
         dbconf = DbConfig(dbbin, dbdata)
+        for ns in branch_samples(branch, nsamples):
+            pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=ns)
 
-        yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
-
-
+            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
 def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], dry=True):
@@ -238,7 +238,7 @@ if __name__ == '__main__':
     #     run_tests('parallelism_sel30_1', test_micro_parallelism(s, 0.3, cm=6, nsamples=[1, 5, 10]))
 
     for s in [12345, 23456, 34567]:
-        run_tests('shmem_at_sf100', test_large_mem(s))
+        run_tests('shmem_at_sf100_with_iostats', test_large_mem(s))
 
     # TODO maybe redo with iostats now?
 

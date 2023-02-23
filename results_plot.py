@@ -15,8 +15,9 @@ matplotlib.use('TkAgg')
 
 # rename certain columns to make them easier to work with
 rename_cols = {
-    'Average Latency (microseconds)': 'avg_latency',
+    'Average Latency (microseconds)': 'avg_latency_ms',
     'Throughput (requests/second)': 'throughput',
+    'Benchmark Runtime (nanoseconds)': 'total_time_ns',
 }
 
 
@@ -304,7 +305,7 @@ def main(df: pd.DataFrame):
     #     #             y='hit_rate', ylabel='hit rate', ybound=(0, 1), avg_y_values=True,
     #     #             title=f'averaged hit_rate vs parallelism')
     #
-    # for nsamples in ['5', '10']:
+    # for nsamples in ['2', '5', '10']:
     #     df_filtered = df[df.pbm_evict_num_samples.isin(['', '1', nsamples])]
     #     plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
     #              x='parallelism', xsort=True, xlabel='Parallelism',
@@ -315,6 +316,8 @@ def main(df: pd.DataFrame):
     #              y='max_stream_s', ylabel='Max stream time', avg_y_values=True,
     #              title=f'Max stream time vs parallelism (samples = {nsamples})')
 
+
+    # TODO redo ^ using `parallelism_sel30_1` - should be less random...
 
     #
     # f, axs = plt.subplots(2, 3)
@@ -328,7 +331,8 @@ def main(df: pd.DataFrame):
 
     # data processed/read per second/stream
     # for nsamples in ['5', '10']:
-    for nsamples in ['10']:
+    # for nsamples in ['10']:
+    for nsamples in []:
         df_filtered = df[df.pbm_evict_num_samples.isin(['', '1', nsamples]) & (df.branch != 'pbm3')]
         plot_exp(df_filtered, 'test_weird_spike_3', group=['branch', 'pbm_evict_num_samples'],
                  x='parallelism', xsort=True, xlabel='Parallelism',
