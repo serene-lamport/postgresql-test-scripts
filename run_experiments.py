@@ -182,6 +182,22 @@ def test_micro_parallelism_same_stream_count(seed: int, parallel_ops=None) -> It
     return test_micro_parallelism(seed, None, cm=6, parallel_ops=parallel_ops, nsamples=[1, 5, 10])
 
 
+def test_large_mem(seed: int) -> Iterable[ExperimentConfig]:
+    dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
+    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=100)
+    bbconf = BBaseConfig(nworkers=4, seed=seed, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(1).with_selectivity(0.5))
+    shmem = '28GB'
+
+    for branch in [BRANCH_PBM1, BRANCH_PBM2, BRANCH_POSTGRES_BASE]:
+        pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=10 if branch.accepts_nsamples else None)
+        dbbin = DbBin(branch)
+        dbconf = DbConfig(dbbin, dbdata)
+
+        yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
+
+
+
+
 def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], dry=True):
     not_tried = list(exp)[done_count:]
     if dry:
@@ -218,7 +234,12 @@ if __name__ == '__main__':
     # re-run part which failed...
     # rerun_failed(43, 'buffer_sizes_p16_1', test_micro_shared_memory(15858, parallelism=16))
 
-    for s in [21473, 25796, 11251, 28834, 16400]:
-        run_tests('parallelism_sel30_1', test_micro_parallelism(s, 0.3, cm=6, nsamples=[1, 5, 10]))
+    # for s in [21473, 25796, 11251, 28834, 16400]:
+    #     run_tests('parallelism_sel30_1', test_micro_parallelism(s, 0.3, cm=6, nsamples=[1, 5, 10]))
+
+    for s in [12345, 23456, 34567]:
+        run_tests('shmem_at_sf100', test_large_mem(s))
+
+    # TODO maybe redo with iostats now?
 
     ...

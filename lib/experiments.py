@@ -65,6 +65,7 @@ class Workload:
     name: str
     base_config_file: str
     db_host: str
+    device: str
 
     def db_name(self, sf: int):
         return f'{self.name.upper()}_{sf}'
@@ -166,8 +167,8 @@ class CountedWorkloadConfig(WorkloadConfig):
 
 
 # The available workloads
-TPCH = Workload('tpch', 'bbase_config/sample_tpch_config.xml', PG_HOST_TPCH)
-TPCC = Workload('tpcc', 'bbase_config/sample_tpcc_config.xml', PG_HOST_TPCC)
+TPCH = Workload('tpch', 'bbase_config/sample_tpch_config.xml', PG_HOST_TPCH, PG_DATA_DEVICE)
+TPCC = Workload('tpcc', 'bbase_config/sample_tpcc_config.xml', PG_HOST_TPCC, PG_DATA_DEVICE)
 
 
 WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0', time_s=BBASE_TIME)
@@ -676,6 +677,13 @@ def stop_remote_postgres(conn: fabric.Connection, case: DbConfig):
     conn.run(f'{pgctl} stop -D {data_dir}')
 
 
+def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
+    """Get disk stats (sectors_read, sectors_written) of the remote host"""
+    dev = case.data.workload.device
+    res = conn.run(f'cat /sys/blk/{dev}/stat', hide=True).stdout.split()
+    return int(res[2]), int(res[6])
+
+
 def prewarm_lineitem(data: DbData):
     """Prewarm lineitem cache for the given database config (DB must be running)"""
     with pg.open(data.conn_str) as conn:
@@ -747,18 +755,20 @@ def run_bbase_test(exp: ExperimentConfig):
     """
     Run benchbase (on local machine) against PostgreSQL on the remote host.
     Will start & stop PostgreSQL on the remote host.
+    Returns (sectors read, sectores written)
     """
     dbconf = exp.dbconf
     bbconf = exp.bbconf
     pgconf = exp.pgconf
 
-    db_host = bbconf.workload.workload.db_host
-    bb_workload_name = bbconf.workload.workload.name.lower()
+    workload = bbconf.workload.workload
+    db_host = workload.db_host
+    bb_workload_name = workload.name.lower()
     temp_bbase_config = BUILD_ROOT / f'bbase_{bb_workload_name}_config.xml'
 
     # sanity checks
     assert dbconf.check_consistent(), "Error with the DB configuration!"
-    assert bbconf.workload.workload == dbconf.data.workload, "BB config and DB confid have different workloads!"
+    assert workload == dbconf.data.workload, "BB config and DB confid have different workloads!"
 
     create_bbase_config(dbconf.sf, bbconf, temp_bbase_config)
 
@@ -768,12 +778,16 @@ def run_bbase_test(exp: ExperimentConfig):
 
     try:
         # prewarm lineitem table if desired (TPCH only)
-        if bbconf.prewarm and bbconf.workload.workload is TPCH:
+        if bbconf.prewarm and workload is TPCH:
             print(f'Pre-warming cache for lineitem table...')
             prewarm_lineitem(dbconf.data)
 
         # Clear statistics on remote postgres
         clear_pg_stats(dbconf.data)
+
+        # get iostats! (/sys/blocks/sdb/stat in this case)
+        with FabConnection(db_host) as conn:
+            pre_reads, pre_writes = get_remote_disk_stats(conn, dbconf)
 
         # Run benchbase
         subprocess.Popen([
@@ -784,6 +798,13 @@ def run_bbase_test(exp: ExperimentConfig):
             '--execute=true',
             '-d', str(exp.results_bbase_subdir),
         ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
+
+        # get & return iostats after the test
+        with FabConnection(db_host) as conn:
+            post_reads, post_writes = get_remote_disk_stats(conn, dbconf)
+
+        return (post_reads - pre_reads), (post_writes - pre_writes)
+
     finally:
         with FabConnection(db_host) as conn:
             stop_remote_postgres(conn, dbconf)
@@ -1286,8 +1307,13 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         tpcc_restore_data_dir(dbconf)
 
     # Actually run the tests
-    run_bbase_test(exp_config)
+    reads, writes = run_bbase_test(exp_config)
     rename_bbase_results(exp_config.results_bbase_subdir)
+    # store IO stats in the results
+    with open(exp_config.results_bbase_subdir / IOSTATS_FILE, 'w') as f:
+        iostats = {'sectors_read': reads, 'sectors_written': writes, }
+        f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(iostats))
+        f.write('\n')  # ensure trailing newline
 
 
 def run_bench(args):

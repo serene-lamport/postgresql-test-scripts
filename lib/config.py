@@ -24,6 +24,8 @@ PG_PASSWD: str = ''
 
 # Postgres data files (absolute path)
 PG_DATA_ROOT = pathlib.Path('/hdd1/pgdata')
+# this is the device on the host which has the given file path.
+PG_DATA_DEVICE: str = 'sdb'
 
 # Where to clone/compile everything (absolute path)
 BUILD_ROOT = pathlib.Path('/home/ta3vande/PG_TESTS')
@@ -92,7 +94,8 @@ RESULTS_ROOT = BUILD_ROOT / 'results'
 CONFIG_FILE_NAME = 'test_config.json'
 CONSTRAINTS_FILE = 'constraints.csv'
 INDEXES_FILE = 'indexes.csv'
-NON_DIR_RESULTS = [CONFIG_FILE_NAME, CONSTRAINTS_FILE, INDEXES_FILE]
+IOSTATS_FILE = 'iostats.json'
+NON_DIR_RESULTS = [CONFIG_FILE_NAME, CONSTRAINTS_FILE, INDEXES_FILE, IOSTATS_FILE]
 
 # Aggregate results to:
 COLLECTED_RESULTS_CSV = 'results.csv'

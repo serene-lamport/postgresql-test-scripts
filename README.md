@@ -26,8 +26,9 @@ Using the script
 2. `./main.py --help` descripes the general operations. Before running, open `main.py` and edit the configuration variables at the top of the file. (make sure you have the same changes on each machine if you are not using network storage) The main variables to change are:
     - `PG_HOST` (and optionally `PG_PORT`: Hostname or IP of the machine where postgres should be installed/run during the experiments.
     - `PG_USER` (and optionally `PG_PASSWORD`, but by default it will be configured with no password): The username to connect as, should likely be your OS user used for the first-time setup.
-    - `PG_DATA_ROOT`: The directory where postgres database files will be generated. Make sure there is lots of space here, and that this is an absolute path not relative.
     - `BUILD_ROOT`: The directory where code will be compiled and binaries installed. This should also be an absolute path.
+    - `PG_DATA_ROOT`: The directory where postgres database files will be generated. Make sure there is lots of space here, and that this is an absolute path not relative.
+    - `PG_DATA_DEVICE`: The device on the host where `PG_DATA_ROOT` is located. This can be determined with `df <PG_DATA_ROOT>`. (note: df will return the specific partition. Check the output of `lsblk` for the device name of the partition)
 
 3. Create the directory pointed to by `PG_DATA_ROOT` and `BUILD_ROOT` on the relevant hosts.
 3. Run `./main.py pg_setup` on the postgres machine to clone, build, and install postgress on all configurations.

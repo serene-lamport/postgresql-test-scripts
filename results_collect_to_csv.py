@@ -34,6 +34,8 @@ csv_cols = [
     'block_group_size', 'workload', 'scalefactor', 'selectivity', 'clustering', 'indexes', 'shared_buffers',
     'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'parallelism', 'time', 'count_multiplier',
     'prewarm', 'seed',
+    # from OS IO statis
+    'sectors_read', 'sectors_written',
     # from benchbase summary:
     'Throughput (requests/second)', 'Goodput (requests/second)', 'Benchmark Runtime (nanoseconds)',
     # latency from benchbase summary:
@@ -52,8 +54,8 @@ csv_cols = [
 ##########
 
 
-def read_config(config_dir) -> Optional[dict]:
-    """Read and parse the config file, or return `None` if it isn't valid."""
+def read_config(config_dir: str, file: str) -> Optional[dict]:
+    """Read and parse a file in the results directory, or return `None` if it isn't valid."""
     path = RESULTS_ROOT / config_dir / CONFIG_FILE_NAME
     try:
         with open(path, 'r') as f:
@@ -122,7 +124,7 @@ def collect_results_to_csv(res_dir: Path):
     for conf_dir in os.listdir(res_dir):
 
         # read config file if it is there
-        config = read_config(conf_dir)
+        config = read_config(conf_dir, CONFIG_FILE_NAME)
 
         if config is None:
             print(f'{conf_dir}: No config, skipping...')
@@ -136,6 +138,8 @@ def collect_results_to_csv(res_dir: Path):
         except (ValueError, IndexError) as e:
             print(f'ERROR: some subdirectory did not match the naming scheme, don\'t know how to parse {conf_dir}!')
             print(f'    {e!r}')
+        if len(pgconfigs) > 1:
+            print(f'WARNING: multiple subdirectories in {conf_dir}!')
 
         try:
             for brnch, blk_sz in pgconfigs:
@@ -151,6 +155,11 @@ def collect_results_to_csv(res_dir: Path):
                         stream_times = json_decode(st_file.read())
                 except FileNotFoundError:
                     stream_times = []
+                try:
+                    with open(subdir / IOSTATS_FILE, 'r') as stats_file:
+                        iostats = json_decode(stats_file.read())
+                except FileNotFoundError:
+                    iostats = {}
 
                 io_metrics = io_metrics_map(metrics, blk_sz)
 
@@ -163,6 +172,7 @@ def collect_results_to_csv(res_dir: Path):
                     'average_stream_s': sum(stream_times) / len(stream_times) / (10**6) if stream_times else None,
                     'max_stream_s': max(stream_times) / (10**6) if stream_times else None,
                     **config,
+                    **iostats,
                     **summary,
                     **summary['Latency Distribution'],
                     **io_metrics,
