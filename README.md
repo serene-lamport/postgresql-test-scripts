@@ -8,6 +8,7 @@ Prerequisites
 - java jdk 17 (or newer) to compile & run benchbase: `sudo apt install openjdk-17-jdk`
 - prerequisites to build PostgreSQL
 - `python3-tk` for the process_results script to show figures
+- `cgroup-tools` for creating and configuring cgroups to limit total system memory, including availble OS cache space
 
 
 Python virtual environment
@@ -31,7 +32,8 @@ Using the script
     - `PG_DATA_DEVICE`: The device on the host where `PG_DATA_ROOT` is located. This can be determined with `df <PG_DATA_ROOT>`. (note: df will return the specific partition. Check the output of `lsblk` for the device name of the partition)
 
 3. Create the directory pointed to by `PG_DATA_ROOT` and `BUILD_ROOT` on the relevant hosts.
-3. Run `./main.py pg_setup` on the postgres machine to clone, build, and install postgress on all configurations.
-4. Run `./main.py benchbase_setup` on both machines (or only one, if `BUILD_ROOT` is a shared network drive) to install benchbase.
-5. Run `./main.py gen_test_data -sf <scalefactor>` on the postgres machine to load data through benchbase.
-6. Finally, run `./main.py bench ...` from the _test_ machine (not the postgres host) to run the benchmarks. See `./main.py --help` for arguments to `bench`.
+4. Run `sudo cgcreate -t $USER: -a $USER: -g memory:postgres_pbm` on the postgres host to create the cgroup used for testing. (a group can optionally be specified after `$USER:`)
+5. Run `./run_util.py pg_setup` on the postgres machine to clone, build, and install postgress on all configurations.
+6. Run `./run_util.py benchbase_setup` on both machines (or only one, if `BUILD_ROOT` is a shared network drive) to install benchbase.
+7. Run `./run_util.py gen_test_data -sf <scalefactor>` on the postgres machine to load data through benchbase.
+8. Finally, run `./run_util.py bench ...` from the _test_ machine (not the postgres host) to run the benchmarks. See `./main.py --help` for arguments to `bench`.

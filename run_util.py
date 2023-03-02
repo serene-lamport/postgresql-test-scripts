@@ -73,6 +73,7 @@ def main():
                         help='Number of eviction samples for sampling-based PBM')
     parser.add_argument('-sel', '--selectivity', type=float, default=None, dest='selectivity',
                         help='Selectivity of the "alt" query types')
+    parser.add_argument('--host', type=str, default=None, help='Database hostname (if non-default)')
     args = parser.parse_args()
 
     if args.action == 'pg_setup':
@@ -100,7 +101,7 @@ def main():
         gen_data_tpcc(args.sf, blk_sz=args.blk_sz)
 
     elif args.action == 'drop_indexes':
-        drop_all_indexes_tpch(args.sf, blk_sz=args.blk_sz)
+        drop_all_indexes_tpch(args.sf, blk_sz=args.blk_sz, db_host=args.host)
 
     elif args.action == 'reindex':
         reindex(args)

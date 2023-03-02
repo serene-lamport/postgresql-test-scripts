@@ -25,7 +25,7 @@ PG_PASSWD: str = ''
 # Postgres data files (absolute path)
 PG_DATA_ROOT = pathlib.Path('/hdd1/pgdata')
 # this is the device on the host which has the given file path.
-PG_DATA_DEVICE: str = 'sdb'
+PG_DATA_DEVICE: str = 'sdb/sdb1'
 
 # Where to clone/compile everything (absolute path)
 BUILD_ROOT = pathlib.Path('/home/ta3vande/PG_TESTS')
@@ -59,8 +59,10 @@ BRANCH_POSTGRES_BASE = PgBranch(0, 'base', 'REL_14_STABLE')
 BRANCH_PBM1 = PgBranch(1, 'pbm1', 'pbm_part1')  # described in paper
 BRANCH_PBM2 = PgBranch(2, 'pbm2', 'pbm_part2')  # using sampling-based eviction
 BRANCH_PBM3 = PgBranch(2, 'pbm3', 'pbm_part3')  # some support for non-registered buffers
-
+# temporary branches for comparing minor changes:
 BRANCH_PBM_OLD = PgBranch(1, 'pbm_old', 'pbm_old')
+BRANCH_PBM_COMPARE1 = PgBranch(2, 'pbm_comp1', 'pbm_comp1')
+BRANCH_PBM_COMPARE2 = PgBranch(2, 'pbm_comp2', 'pbm_comp2')
 
 POSTGRES_ALL_BRANCHES: typing.List[PgBranch] = [
     BRANCH_POSTGRES_BASE,
@@ -70,6 +72,8 @@ POSTGRES_ALL_BRANCHES: typing.List[PgBranch] = [
 
     # TEMP: for comparing changes in my own code
     # BRANCH_PBM_OLD,
+    BRANCH_PBM_COMPARE1,
+    BRANCH_PBM_COMPARE2,
 ]
 
 
@@ -108,3 +112,6 @@ LAST_CONFIG_FILE = 'last_config.json'
 # size) This value is divided by the block size (in kB), so it should be a common multiple of all block sizes.
 # use 256 KiB so it matches the smallest block group size we're using
 BASE_PAGES_PER_RANGE = 32 * 8  # note: 128 is the default 'blocks_per_range' and 8 (kB) is default block size.
+
+# Cgroup to run postgres under to limit total system memory
+PG_CGROUP: str = 'postgres_pbm'

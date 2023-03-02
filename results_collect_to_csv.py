@@ -32,8 +32,8 @@ csv_cols = [
     'experiment', 'dir', 'branch', 'block size',
     # configuration from configuration json file
     'block_group_size', 'workload', 'scalefactor', 'selectivity', 'clustering', 'indexes', 'shared_buffers',
-    'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'parallelism', 'time', 'count_multiplier',
-    'prewarm', 'seed',
+    'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'parallelism', 'time',
+    'count_multiplier', 'prewarm', 'seed',
     # from OS IO statis
     'sectors_read', 'sectors_written',
     # from benchbase summary:
@@ -181,6 +181,9 @@ def collect_results_to_csv(res_dir: Path):
                 rows.append(row)
 
                 writer.writerow(row)
+
+                if stream_times and min(stream_times) < 0:
+                    print(f'WARNING: negative stream times for {conf_dir}! e={config["experiment"]}')
 
         except FileNotFoundError as e:
             print(f'ERROR: could not find the benchbase files for {conf_dir}!')

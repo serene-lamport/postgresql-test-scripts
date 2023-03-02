@@ -364,9 +364,22 @@ def main(df: pd.DataFrame):
     # TODO consider `seaborn` package for better visualization...
 
 
+def add_reads(df: pd.DataFrame) -> pd.DataFrame:
+    df.sectors_read = pd.to_numeric(df.sectors_read)
+    df['hw_read_gb'] = df.sectors_read * 512 / 2**30
+
+    df['hw_mb_per_s'] = df.hw_read_gb * 1024 * 10**9 / df.total_time_ns
+    df['pg_mb_per_s'] = df.data_read_gb * 1024 * 10**9 / df.total_time_ns
+    df['minutes_total'] = df.total_time_ns / 10**9 / 60
+    df['minutes_stream'] = df.max_stream_s / 60
+
+    return df
+
+
 if __name__ == '__main__':
     # Read in the data, converting certain column names
     df = pd.read_csv(COLLECTED_RESULTS_CSV, keep_default_na=False).rename(columns=rename_cols)
+    df_orig = df.copy()
 
     # Add some columns for convenience
 
@@ -376,8 +389,33 @@ if __name__ == '__main__':
     df['data_processed_per_stream'] = df.data_processed_gb / df.parallelism
     df['data_read_per_s'] = df.data_read_gb / df.max_stream_s
     df['data_processed_per_s'] = df.data_processed_gb / df.max_stream_s
+    df = add_reads(df)
 
     df, plots = main(df)
+
+
+    # shmem_at_sf100_with_iostats
+    # shmem_at_sf100_with_caching
+
+
+
+    df_g = df[['experiment', 'branch', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'hit_rate', 'minutes_total', 'minutes_stream', 'pg_mb_per_s', 'hw_mb_per_s']]
+    g = df_g.groupby(['experiment', 'branch', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age'])
+    res = g.mean()
+    res['min_t_ci'] = g['minutes_total'].sem() * 1.96
+    res['min_s_ci'] = g['minutes_stream'].sem() * 1.96
+    res['hit_rate_ci'] = g['hit_rate'].sem() * 1.96
+
+    e1 = 'comparing_bg_lock_types'
+    e2 = 'comparing_bg_lock_types_2'
+    e3 = 'comparing_bg_lock_types_3'
+    e4 = 'comparing_bg_lock_types_4'
+
+    es = [e1, e2, e3, e4]
+
+    cg = df[df.experiment == 'test_cgroup']
+
+
 
 
 # TESTING

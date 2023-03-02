@@ -40,7 +40,7 @@ PG_BLK_SIZES = [8]
 
 # Time to run tests (s)
 # BBASE_TIME = 600
-BBASE_TIME = 20
+BBASE_TIME = 200
 BBASE_WARMUP_TIME = 10
 
 # Allowed sizes of block groups (in KiB). Database is compiled for each of these sizes.
@@ -64,7 +64,7 @@ DEFAULT_BG_SIZE = 256
 class Workload:
     name: str
     base_config_file: str
-    db_host: str
+    default_db_host: str
     device: str
 
     def db_name(self, sf: int):
@@ -237,9 +237,8 @@ class DbData:
     def db_name(self) -> str:
         return self.workload.db_name(self.sf)
 
-    @property
-    def conn_str(self) -> str:
-        return f'pq://{self.workload.db_host}/{self.db_name}'
+    def conn_str(self, host: str) -> str:
+        return f'pq://{host}/{self.db_name}'
 
 
 @dataclass(frozen=True)
@@ -284,6 +283,19 @@ class DbConfig:
 
 
 @dataclass
+class CGroupConfig:
+    mem_gb: float
+    name: str = PG_CGROUP
+
+    @property
+    def mem_bytes(self):
+        return int(self.mem_gb * 2**30)
+
+    def to_config_map(self) -> dict:
+        return {'cgroup_gb': self.mem_gb, }
+
+
+@dataclass
 class BBaseConfig:
     """
     Information about how to configure benchbase for the test, and any database setup that has to be run before the
@@ -316,6 +328,7 @@ class RuntimePgConfig:
     # PBM-only fields:
     # pbm2 and later:
     pbm_evict_num_samples: Optional[int] = None
+    pbm_bg_naest_max_age: Optional[float] = None
 
     def config_dict(self) -> Dict[str, str]:
         return {k: (str(v) if v is not None else None) for k, v in asdict(self).items()}
@@ -333,24 +346,21 @@ class DbSetup:
         return ret
 
 
+@dataclass
 class ExperimentConfig:
     """All configuration for an experiment"""
     pgconf: RuntimePgConfig
     dbconf: DbConfig
     dbsetup: DbSetup
     bbconf: BBaseConfig
+    db_host: str = None
+    cgroup: Optional[CGroupConfig] = None
 
-    _res_dir: Optional[Path] = None
+    _res_dir: Optional[Path] = field(init=False, default=None)
 
-    def __init__(self,
-                 pgconf: RuntimePgConfig,
-                 dbconf: DbConfig,
-                 dbsetup: DbSetup,
-                 bbconf: BBaseConfig):
-        self.pgconf = pgconf
-        self.dbconf = dbconf
-        self.dbsetup = dbsetup
-        self.bbconf = bbconf
+    def __post_init__(self):
+        if self.db_host is None:
+            self.db_host = self.bbconf.workload.workload.default_db_host
 
     @property
     def results_dir(self) -> Path:
@@ -657,7 +667,7 @@ def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: Ru
     os.remove(local_temp_path)
 
 
-def start_remote_postgres(conn: fabric.Connection, case: DbConfig):
+def start_remote_postgres(conn: fabric.Connection, case: DbConfig, cgroup: CGroupConfig = None):
     """Start PostgreSQL from the benchmark client machine."""
     install_path = case.bin.install_path
     pgctl = install_path / 'bin' / 'pg_ctl'
@@ -665,16 +675,22 @@ def start_remote_postgres(conn: fabric.Connection, case: DbConfig):
     logfile = data_dir / 'logfile'
 
     conn.run(f'truncate --size=0 {logfile}')
-    conn.run(f'{pgctl} start -D {data_dir} -l {logfile}')
+    start_cmd = f'{pgctl} start -D {data_dir} -l {logfile}'
+    if cgroup is not None:
+        conn.run(f'cgset -r memory.limit_in_bytes={cgroup.mem_bytes} {cgroup.name}')
+        start_cmd = f'cgexec -g memory:{cgroup.name} {start_cmd}'
+    conn.run(start_cmd)
 
 
-def stop_remote_postgres(conn: fabric.Connection, case: DbConfig):
+def stop_remote_postgres(conn: fabric.Connection, case: DbConfig, immediate=False):
     """Stop PostgreSQL remotely."""
     install_path = case.bin.install_path
-    pgctl = install_path / 'bin' / 'pg_ctl'
+    pgctl = install_path / 'bin' / 'pg_ctl -t 600'
     data_dir = case.data.data_path
 
-    conn.run(f'{pgctl} stop -D {data_dir}')
+    extra_args = '-m i' if immediate else ''
+
+    conn.run(f'{pgctl} stop -D {data_dir} {extra_args}')
 
 
 def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
@@ -684,27 +700,26 @@ def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
     return int(res[2]), int(res[6])
 
 
-def prewarm_lineitem(data: DbData):
+def prewarm_lineitem(data: DbData, dbhost: str):
     """Prewarm lineitem cache for the given database config (DB must be running)"""
-    with pg.open(data.conn_str) as conn:
+    with pg.open(data.conn_str(dbhost)) as conn:
         conn: PgConnection
         conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
         conn.execute('''select pg_prewarm('lineitem');''')
 
 
-def clear_pg_stats(data: DbData):
+def clear_pg_stats(data: DbData, dbhost: str):
     """Clear IO statistics for the given database config (DB must be running))"""
-    with pg.open(data.conn_str) as conn:
+    with pg.open(data.conn_str(dbhost)) as conn:
         conn: PgConnection
         conn.execute('SELECT pg_stat_reset();')
 
 
-def create_bbase_config(sf: int, bb_config: BBaseConfig, out, local=False):
+def create_bbase_config(sf: int, bb_config: BBaseConfig, out, host):
     """Set connection information and scale factor in a BenchBase config file."""
     tree = ET.parse(bb_config.workload.workload.base_config_file)
     db_name = bb_config.workload.workload.db_name(sf)
     app_name = bb_config.workload.workload.name
-    host = 'localhost' if local else bb_config.workload.workload.db_host
 
     params = tree.getroot()
     params.find('url').text = f'jdbc:postgresql://{host}:{PG_PORT}/{db_name}?sslmode=disable&amp;ApplicationName={app_name}&amp;reWriteBatchedInserts=true'
@@ -762,7 +777,7 @@ def run_bbase_test(exp: ExperimentConfig):
     pgconf = exp.pgconf
 
     workload = bbconf.workload.workload
-    db_host = workload.db_host
+    db_host = exp.db_host
     bb_workload_name = workload.name.lower()
     temp_bbase_config = BUILD_ROOT / f'bbase_{bb_workload_name}_config.xml'
 
@@ -770,20 +785,22 @@ def run_bbase_test(exp: ExperimentConfig):
     assert dbconf.check_consistent(), "Error with the DB configuration!"
     assert workload == dbconf.data.workload, "BB config and DB confid have different workloads!"
 
-    create_bbase_config(dbconf.sf, bbconf, temp_bbase_config)
+    create_bbase_config(dbconf.sf, bbconf, temp_bbase_config, host=db_host)
 
     with FabConnection(db_host) as conn:
         config_remote_postgres(conn, dbconf, pgconf)
-        start_remote_postgres(conn, dbconf)
+        start_remote_postgres(conn, dbconf, cgroup=exp.cgroup)
+        # empty the buffer cache on remote host
+        conn.run('echo 1 | sudo tee /proc/sys/vm/drop_caches')
 
     try:
         # prewarm lineitem table if desired (TPCH only)
         if bbconf.prewarm and workload is TPCH:
             print(f'Pre-warming cache for lineitem table...')
-            prewarm_lineitem(dbconf.data)
+            prewarm_lineitem(dbconf.data, db_host)
 
         # Clear statistics on remote postgres
-        clear_pg_stats(dbconf.data)
+        clear_pg_stats(dbconf.data, db_host)
 
         # get iostats! (/sys/blocks/sdb/stat in this case)
         with FabConnection(db_host) as conn:
@@ -807,7 +824,7 @@ def run_bbase_test(exp: ExperimentConfig):
 
     finally:
         with FabConnection(db_host) as conn:
-            stop_remote_postgres(conn, dbconf)
+            stop_remote_postgres(conn, dbconf, immediate=workload is TPCC)
 
 
 def pg_exec_file(conn: PgConnection, file):
@@ -847,7 +864,7 @@ def create_and_populate_tpch_local(case: DbConfig):
         print(f'BenchBase: loading test data...')
         bbase_config_file = BUILD_ROOT / 'load_config.xml'
         bbconf = BBaseConfig(nworkers=1, workload=WORKLOAD_TPCH_WEIGHTS)
-        create_bbase_config(case.sf, bbconf, bbase_config_file, local=True)
+        create_bbase_config(case.sf, bbconf, bbase_config_file, host='localhost')
         run_bbase_load('tpch', bbase_config_file)
 
         # Re-enable vacuum after loading is complete
@@ -895,7 +912,7 @@ def create_and_populate_tpcc_local(case: DbConfig):
         print(f'BenchBase: loading test data...')
         bbase_config_file = BUILD_ROOT / 'load_config.xml'
         bbconf = BBaseConfig(nworkers=1, workload=WORKLOAD_TPCC)
-        create_bbase_config(case.sf, bbconf, bbase_config_file, local=True)
+        create_bbase_config(case.sf, bbconf, bbase_config_file, host='localhost')
         run_bbase_load('tpcc', bbase_config_file, create=True)
 
         # Run ANALYZE to make sure stats are up-to-date, and CHECKPOINT to clear out the WAL
@@ -922,7 +939,7 @@ def tpcc_restore_data_dir(case: DbConfig):
     src_dir = tpcc_src_data_dir(case)
 
     print(f'Restoring TPCC database files: copying {src_dir} to {data_dir}...')
-    with FabConnection(case.data.workload.db_host) as fabconn:
+    with FabConnection(case.data.workload.default_db_host) as fabconn:
         fabconn.run(f'rm --recursive --force {data_dir}')  # --force to ignore error if it is already not there
         fabconn.run(f'cp --recursive {src_dir} {data_dir}')
 
@@ -1010,9 +1027,8 @@ def read_constraints_indexes(pgconn: PgConnection):
     return constraints, indexes
 
 
-def setup_indexes_cluster_tpch(blk_sz: int, sf: int, *, prev: DbSetup, new: DbSetup):
+def setup_indexes_cluster_tpch(blk_sz: int, sf: int, db_host: str, *, prev: DbSetup, new: DbSetup):
     """Change indexes and clustering on the database. Remembers the changes in `last_config.json`"""
-    db_host = PG_HOST_TPCH
 
     with FabConnection(db_host) as fabconn:
         dbbin = DbBin(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz)
@@ -1151,12 +1167,12 @@ def gen_data_tpcc(sf: int, blk_sz: int):
     create_and_populate_tpcc_local(dbconf)
 
 
-def drop_all_indexes_tpch(sf: int, blk_sz: int):
+def drop_all_indexes_tpch(sf: int, blk_sz: int, db_host: str):
     """Drop all indexes and constraints. More powerful cleanup function if something goes really wrong."""
     if sf is None:
         raise Exception(f'Must specify scale factor of databases to clean up!')
 
-    db_host = TPCH.db_host
+    db_host = db_host or TPCH.default_db_host
 
     print(f'~~~~~~~~~~ Dropping all indexes and constraints for TPCH blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
 
@@ -1168,7 +1184,7 @@ def drop_all_indexes_tpch(sf: int, blk_sz: int):
         start_remote_postgres(fabconn, dbconf)
 
         try:
-            with pg.open(dbdata.conn_str) as pgconn:
+            with pg.open(dbdata.conn_str(db_host)) as pgconn:
                 # find and drop constraints
                 all_constraints = pgconn.query("""
                     select conrelid::regclass as table, conname as constraint
@@ -1226,7 +1242,7 @@ def reindex(args):
     new_setup = DbSetup(indexes=new_indexes, clustering=new_cluster)
 
     print(f'~~~~~~~~~~ Reconfiguring using indexes {new_indexes}, clustering {new_cluster} for blk_sz={args.blk_sz}, sf={args.sf} ~~~~~~~~~~')
-    setup_indexes_cluster_tpch(args.blk_sz, args.sf, prev=prev_setup, new=new_setup)
+    setup_indexes_cluster_tpch(args.blk_sz, args.sf, db_host=args.host or PG_HOST_TPCH, prev=prev_setup, new=new_setup)
 
 
 def run_experiment(experiment: str, exp_config: ExperimentConfig):
@@ -1255,8 +1271,11 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
             **dbconf.to_config_map(),
             **asdict(pgconf),
             **bbconf.to_config_map(),
+            **exp_config.cgroup.to_config_map(),
             **dbsetup_dict,
         }
+        if exp_config.cgroup is not None:
+            config.update(exp_config.cgroup.to_config_map())
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(config))
         f.write('\n')  # ensure trailing newline
 
@@ -1266,6 +1285,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     print(f'======================================================================')
     print(f'== Running experiments with:')
     print(f'==   Seed:                  {bbconf.seed}')
+    print(f'==   DB host:               {exp_config.db_host}')
     print(f'==   Branch:                {dbconf.branch.name}')
     # print(f'==   Scale factor:          {sf}')
     # print(f'==   Block size:            {blk_sz} KiB')
@@ -1282,8 +1302,6 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         s = '' if s == 0 else f' {s} s'
         print(f'==   Time:                  {t // 60} min{s}')
     print(f'==   Terminals:             {bbconf.nworkers}')
-    # print(f'==   SyncScans:             {pgconf.synchronize_seqscans}')
-    # print(f'==   Prewarm:               {bbconf.prewarm}')
     print(f'==   PBM num samples:       {pgconf.pbm_evict_num_samples}')
     print(f'== Storing results to {results_dir}')
     print(f'======================================================================')
@@ -1291,7 +1309,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     if is_tpch:
         # Make sure we have the desired indexes & clustering if applicable
         print(f'~~~~~~~~~~ Setup indexes={dbsetup.indexes}, clustering={dbsetup.clustering} for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
-        constraints, indexes = setup_indexes_cluster_tpch(blk_sz, sf,
+        constraints, indexes = setup_indexes_cluster_tpch(blk_sz, sf, exp_config.db_host,
                                                           prev=prev_setup, new=dbsetup)
 
         # remember when indexes and constraints are defined in case we want to double check later...
@@ -1315,6 +1333,8 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(iostats))
         f.write('\n')  # ensure trailing newline
 
+    print(f'disk reads = {reads} = {reads * 512 / 2**20} MiB = {reads * 512 / 2**30} GiB')
+
 
 def run_bench(args):
     experiment: str = args.experiment
@@ -1331,6 +1351,8 @@ def run_bench(args):
     if args.workload not in WORKLOADS_MAP:
         raise Exception(f'Unknown workload type {args.workload}')
     workload = WORKLOADS_MAP[args.workload]
+
+    db_host = args.host or workload.workload.default_db_host
 
     if args.selectivity is not None:
         workload = workload.with_selectivity(args.selectivity)
@@ -1357,5 +1379,5 @@ def run_bench(args):
     bbconf = BBaseConfig(nworkers=args.parallelism, workload=workload, prewarm=args.prewarm)
 
     # Actually run the experiment after parsing args
-    exp = ExperimentConfig(pgconf=pgconf, dbconf=dbconf, dbsetup=dbsetup, bbconf=bbconf)
+    exp = ExperimentConfig(pgconf=pgconf, dbconf=dbconf, dbsetup=dbsetup, bbconf=bbconf, db_host=db_host)
     run_experiment(experiment, exp)
