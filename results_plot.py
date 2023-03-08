@@ -18,6 +18,7 @@ rename_cols = {
     'Average Latency (microseconds)': 'avg_latency_ms',
     'Throughput (requests/second)': 'throughput',
     'Benchmark Runtime (nanoseconds)': 'total_time_ns',
+    'block size': 'block_size',
 }
 
 
@@ -365,13 +366,22 @@ def main(df: pd.DataFrame):
 
 
 def add_reads(df: pd.DataFrame) -> pd.DataFrame:
-    df.sectors_read = pd.to_numeric(df.sectors_read)
+    # convert hardware stat columns to numeric
+    for c in SYSBLOCKSTAT_COLS:
+        df[c] = pd.to_numeric(df[c])
     df['hw_read_gb'] = df.sectors_read * 512 / 2**30
 
     df['hw_mb_per_s'] = df.hw_read_gb * 1024 * 10**9 / df.total_time_ns
     df['pg_mb_per_s'] = df.data_read_gb * 1024 * 10**9 / df.total_time_ns
     df['minutes_total'] = df.total_time_ns / 10**9 / 60
     df['minutes_stream'] = df.max_stream_s / 60
+
+    df['pg_iolat'] = (df.db_blk_read_time / 1000) / (df.db_blks_read * df.block_size / 2**20)  # ms/block to s/GiB
+    df['hw_iolat'] = (df.read_ticks / 1000) / (df.sectors_read * 512 / 2**30)  # ms/sectors to s/GiB
+
+    # disk wait time (minutes) (concurrent waits including separate worker threads are added)
+    df['pg_disk_wait'] = df.db_blk_read_time / 1000 / 60
+    df['hw_disk_wait'] = df.read_ticks / 1000 / 60
 
     return df
 
@@ -396,11 +406,22 @@ if __name__ == '__main__':
 
     # shmem_at_sf100_with_iostats
     # shmem_at_sf100_with_caching
+    # shmem_at_sf100_with_caching_2
+    # shmem_at_sf100_with_caching_more_iostats
 
 
-
-    df_g = df[['experiment', 'branch', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'hit_rate', 'minutes_total', 'minutes_stream', 'pg_mb_per_s', 'hw_mb_per_s']]
-    g = df_g.groupby(['experiment', 'branch', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age'])
+    df_g = df[[
+        'experiment', 'branch', 'block_size', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age',
+        'hit_rate', 'minutes_total', 'minutes_stream', 'pg_mb_per_s', 'hw_mb_per_s',
+        # 'data_read_gb',
+        # postgres DB stats
+        'db_active_time', 'db_blk_read_time', 'db_blks_hit', 'db_blks_read',
+        # other HW io stats
+        *SYSBLOCKSTAT_COLS,
+        # calculated:
+        'pg_iolat', 'hw_iolat', 'pg_disk_wait', 'hw_disk_wait',
+    ]]
+    g = df_g.groupby(['experiment', 'branch', 'block_size', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age'])
     res = g.mean()
     res['min_t_ci'] = g['minutes_total'].sem() * 1.96
     res['min_s_ci'] = g['minutes_stream'].sem() * 1.96
@@ -415,86 +436,6 @@ if __name__ == '__main__':
 
     cg = df[df.experiment == 'test_cgroup']
 
+    e = 'shmem_at_sf100_with_caching_more_iostats'
 
 
-
-# TESTING
-TESTING = False
-# TESTING = True
-if TESTING:
-    df = pd.DataFrame({
-        'x': [
-            1, 1, 1,
-            2, 2, 2,
-            3, 3, 3,
-            1, 1, 1,
-            2, 2, 2,
-            3, 3, 3,
-              ],
-        'y': [
-            0, 0.8, 0.4,
-            2, 2.1, 2.2,
-            2.5, 2.2, 2.6,
-            3.1, 3.0, 3.1,
-            2.8, 2.2, 2.7,
-            4.0, 4.4, 5.0,
-        ],
-        # 'g': [
-        #     0,0,0,0,0,0,0,0,0,
-        #     1,1,1,1,1,1,1,1,1,
-        # ],
-        'g': ['1'] * 9 + ['2'] * 9,
-        'xlabels': [
-            'a', 'a', 'a',
-            'b', 'b', 'b',
-            'c', 'c', 'c',
-            'a', 'a', 'a',
-            'b', 'b', 'b',
-            'c', 'c', 'c',
-        ],
-    })
-
-    import seaborn as sb
-    import seaborn.objects as so
-    from matplotlib.ticker import FixedLocator, FixedFormatter
-
-    def transform_ticks(t: int):
-        if t > 2:
-            return 'lots!'
-        else:
-            return f'{t} t'
-
-    pl_base = so.Plot(df, x='x', y='y', group='g', color='g')
-    # pl_base = so.Plot(df, x='x', y='y', group=df[['g', 'x']])
-    pl1 = pl_base.add(so.Line(marker='o'), so.Agg()).add(so.Band(), so.Est(errorbar=('se', 1.96)))
-    pl2 = pl1.scale(x=so.Continuous()
-                      .tick(locator=FixedLocator([1, 2, 3]))
-                      .label(formatter=matplotlib.ticker.FixedFormatter(['a', 'b', 'c']))
-                      # .tick(locator=matplotlib.ticker.LogLocator())
-                      # .label(formatter=matplotlib.ticker.LogFormatter(base=2))
-                    )
-    # pl2 = pl2.scale(x='log')
-
-    pl2.show()
-
-    # pl1.show()
-    #
-    # p = pl1.plot()
-    # ax = p._figure.axes[0]
-    # ax.set_xticks([1, 2, 3], labels=['a', 'b', 'c'])
-
-    # f, ax = plt.subplots()
-    # pl2 = pl1.on(ax)
-    # ax.set_xticks([1, 2, 3,], labels=['a', 'b', 'c'])
-    # pl2.show()
-
-
-
-    # grps = df.groupby(['x', 'xlabels'])
-    # print(f'{grps.agg(["mean", "std", "sem"]) = }')
-    # print(f'{grps.agg(["mean", "std", "sem"], ddof=0) = }')
-    # print(f'{grps.agg(["mean", "std", "sem"], ddof=1) = }')
-
-    # df_ret = df_grps.agg(['mean', 'std', 'sem'])
-
-    # want to group by x values w/ xlables, mean/whatever of y

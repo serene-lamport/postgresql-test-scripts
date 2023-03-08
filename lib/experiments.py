@@ -35,8 +35,8 @@ from lib.config import *
 ##############################
 
 # Postgres block size (KiB)
-# PG_BLK_SIZES = [8, 32]
-PG_BLK_SIZES = [8]
+PG_BLK_SIZES = [8, 32]
+# PG_BLK_SIZES = [8]
 
 # Time to run tests (s)
 # BBASE_TIME = 600
@@ -325,6 +325,7 @@ class RuntimePgConfig:
     """
     shared_buffers: str
     synchronize_seqscans: str = 'on'
+    track_io_timing: str = 'off'
     # PBM-only fields:
     # pbm2 and later:
     pbm_evict_num_samples: Optional[int] = None
@@ -537,6 +538,7 @@ def config_postgres_repo(dbbin: DbBin):
         POSTGRES_SRC_PATH / brnch.name / 'configure',
         f'--with-blocksize={blk_sz}',
         f'--prefix={install_path}',
+        '--enable-debug',  # for performance analysis
         version_str,
     ]
 
@@ -694,10 +696,11 @@ def stop_remote_postgres(conn: fabric.Connection, case: DbConfig, immediate=Fals
 
 
 def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
-    """Get disk stats (sectors_read, sectors_written) of the remote host"""
+    """Get disk stats of the remote host as a dict"""
     dev = case.data.workload.device
     res = conn.run(f'cat /sys/block/{dev}/stat', hide=True).stdout.split()
-    return int(res[2]), int(res[6])
+
+    return {a: b for a, b in zip(SYSBLOCKSTAT_COLS, res)}
 
 
 def prewarm_lineitem(data: DbData, dbhost: str):
@@ -770,7 +773,7 @@ def run_bbase_test(exp: ExperimentConfig):
     """
     Run benchbase (on local machine) against PostgreSQL on the remote host.
     Will start & stop PostgreSQL on the remote host.
-    Returns (sectors read, sectores written)
+    Returns (disk stats before experiment, disk stats after experiment)
     """
     dbconf = exp.dbconf
     bbconf = exp.bbconf
@@ -791,7 +794,7 @@ def run_bbase_test(exp: ExperimentConfig):
         config_remote_postgres(conn, dbconf, pgconf)
         start_remote_postgres(conn, dbconf, cgroup=exp.cgroup)
         # empty the buffer cache on remote host
-        conn.run('echo 1 | sudo tee /proc/sys/vm/drop_caches')
+        conn.run('echo 1 | sudo tee /proc/sys/vm/drop_caches', hide=True)
 
     try:
         # prewarm lineitem table if desired (TPCH only)
@@ -804,7 +807,7 @@ def run_bbase_test(exp: ExperimentConfig):
 
         # get iostats! (/sys/blocks/sdb/stat in this case)
         with FabConnection(db_host) as conn:
-            pre_reads, pre_writes = get_remote_disk_stats(conn, dbconf)
+            pre_stats = get_remote_disk_stats(conn, dbconf)
 
         # Run benchbase
         subprocess.Popen([
@@ -818,9 +821,9 @@ def run_bbase_test(exp: ExperimentConfig):
 
         # get & return iostats after the test
         with FabConnection(db_host) as conn:
-            post_reads, post_writes = get_remote_disk_stats(conn, dbconf)
+            post_stats = get_remote_disk_stats(conn, dbconf)
 
-        return (post_reads - pre_reads), (post_writes - pre_writes)
+        return pre_stats, post_stats
 
     finally:
         with FabConnection(db_host) as conn:
@@ -1271,7 +1274,6 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
             **dbconf.to_config_map(),
             **asdict(pgconf),
             **bbconf.to_config_map(),
-            **exp_config.cgroup.to_config_map(),
             **dbsetup_dict,
         }
         if exp_config.cgroup is not None:
@@ -1325,15 +1327,16 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         tpcc_restore_data_dir(dbconf)
 
     # Actually run the tests
-    reads, writes = run_bbase_test(exp_config)
+    pre_stats, post_stats = run_bbase_test(exp_config)
     rename_bbase_results(exp_config.results_bbase_subdir)
     # store IO stats in the results
     with open(exp_config.results_bbase_subdir / IOSTATS_FILE, 'w') as f:
-        iostats = {'sectors_read': reads, 'sectors_written': writes, }
+        iostats = {'before': pre_stats, 'after': post_stats, }
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(iostats))
         f.write('\n')  # ensure trailing newline
 
-    print(f'disk reads = {reads} = {reads * 512 / 2**20} MiB = {reads * 512 / 2**30} GiB')
+    # reads = int((post_stats.get('sectors_read') or 0) - int(pre_stats.get('sectors_read') or 0)
+    # print(f'disk reads = {reads} = {reads * 512 / 2**20} MiB = {reads * 512 / 2**30} GiB')
 
 
 def run_bench(args):

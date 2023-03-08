@@ -72,8 +72,8 @@ POSTGRES_ALL_BRANCHES: typing.List[PgBranch] = [
 
     # TEMP: for comparing changes in my own code
     # BRANCH_PBM_OLD,
-    BRANCH_PBM_COMPARE1,
-    BRANCH_PBM_COMPARE2,
+    # BRANCH_PBM_COMPARE1,
+    # BRANCH_PBM_COMPARE2,
 ]
 
 
@@ -115,3 +115,13 @@ BASE_PAGES_PER_RANGE = 32 * 8  # note: 128 is the default 'blocks_per_range' and
 
 # Cgroup to run postgres under to limit total system memory
 PG_CGROUP: str = 'postgres_pbm'
+
+# column names for IO stats for the disk
+# See https://www.kernel.org/doc/html/latest/block/stat.html for what these columns are
+SYSBLOCKSTAT_COLS = [
+    'read_ios', 'read_merges', 'sectors_read', 'read_ticks',
+    'write_ios', 'write_merges', 'sectors_written', 'write_ticks',
+    'in_flight', 'io_ticks', 'time_in_queue',
+    'discard_ios', 'discard_merges', 'discard_sectors', 'discard_ticks',
+    'flush_ios', 'flush_ticks',
+]

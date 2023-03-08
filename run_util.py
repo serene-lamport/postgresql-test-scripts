@@ -113,11 +113,9 @@ def main():
     elif args.action == 'testing':
         pass
 
-        bbconf = BBaseConfig(1, WORKLOAD_MICRO_COUNTS)
-        create_bbase_config(1, bbconf, './test_conf_1.xml')
-
-        bbconf = BBaseConfig(1, WORKLOAD_MICRO_COUNTS.with_selectivity(0.3))
-        create_bbase_config(1, bbconf, './test_conf_2.xml')
+        with FabConnection('tem114') as conn:
+            x = get_remote_disk_stats(conn, DbConfig(DbBin(BRANCH_POSTGRES_BASE), DbData(TPCH, 2)))
+        print(x)
 
     else:
         raise Exception(f'Unknown action {args.action}')

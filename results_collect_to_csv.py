@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import pandas as pd
+
 from lib.config import *
 
 #################
@@ -15,6 +17,8 @@ from lib.config import *
 
 statio_main_cols = ['heap_blks_hit', 'heap_blks_read', 'idx_blks_hit', 'idx_blks_read']
 statio_toast_cols = ['tidx_blks_hit', 'tidx_blks_read', 'toast_blks_hit', 'toast_blks_read']
+# Docs for these columns: https://www.postgresql.org/docs/current/monitoring-stats.html#PG-STAT-DATABASE-VIEW
+dbstat_cols = {c: 'db_' + c for c in ['active_time', 'blk_read_time', 'blks_hit', 'blks_read']}
 bbase_latency_cols = [
     'Average Latency (microseconds)',
     'Maximum Latency (microseconds)',
@@ -35,7 +39,7 @@ csv_cols = [
     'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'parallelism', 'time',
     'count_multiplier', 'prewarm', 'seed',
     # from OS IO statis
-    'sectors_read', 'sectors_written',
+    *SYSBLOCKSTAT_COLS,
     # from benchbase summary:
     'Throughput (requests/second)', 'Goodput (requests/second)', 'Benchmark Runtime (nanoseconds)',
     # latency from benchbase summary:
@@ -43,6 +47,7 @@ csv_cols = [
     # stats from metrics
     'average_stream_s', 'max_stream_s',
     *statio_main_cols,
+    *dbstat_cols.values(),
     *('lineitem_' + col for col in statio_main_cols),
     'hit_rate', 'lineitem_hit_rate',
     'data_read_gb', 'data_processed_gb'
@@ -69,11 +74,38 @@ def read_config(config_dir: str, file: str) -> Optional[dict]:
         return None
 
 
+def decode_iostats(iostats_file: Path, decoder: json.JSONDecoder) -> dict:
+    try:
+        with open(iostats_file, 'r') as stats_file:
+            decoded = decoder.decode(stats_file.read())
+
+        if 'after' in decoded:
+            before = decoded.get('before') or decoded.get('before:')  # make up for silly typo in test scripts...
+            after = decoded['after']
+
+            iostats = {k: (int(after[k]) - int(before[k])) for k in before.keys()}
+
+        else:
+            # only reads and writes
+            iostats = decoded
+    except FileNotFoundError:
+        iostats = {}
+
+    return iostats
+
+
 def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
     """Parse the `metrics.json` json file produced by benchbase and extract io metrics."""
     pg_statio_user_tables = metrics['pg_statio_user_tables']
+    pg_stat_database = metrics['pg_stat_database']
 
-    metrics_totals = {}
+    dbstat_df = pd.DataFrame(pg_stat_database)
+    for c in dbstat_cols.keys():
+        dbstat_df[c] = pd.to_numeric(dbstat_df[c])
+    dbstat_df = dbstat_df.rename(columns=dbstat_cols)
+
+    # Docs for these cols: https://www.postgresql.org/docs/current/monitoring-stats.html#PG-STAT-DATABASE-VIEW
+    metrics_totals = {**dbstat_df[dbstat_cols.values()].sum()}
 
     for col in statio_main_cols:
         metrics_totals[col] = sum(int(r[col] or 0) for r in pg_statio_user_tables)
@@ -109,11 +141,11 @@ def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
     return metrics_totals
 
 
-def collect_results_to_csv(res_dir: Path):
+def collect_results_to_csv(res_dir: Path, csv_out: Path):
     decoder = json.JSONDecoder()
     json_decode = decoder.decode
 
-    out = open(COLLECTED_RESULTS_CSV, 'w')
+    out = open(csv_out, 'w')
     writer = csv.DictWriter(out, csv_cols, extrasaction='ignore')
     writer.writeheader()
 
@@ -155,12 +187,8 @@ def collect_results_to_csv(res_dir: Path):
                         stream_times = json_decode(st_file.read())
                 except FileNotFoundError:
                     stream_times = []
-                try:
-                    with open(subdir / IOSTATS_FILE, 'r') as stats_file:
-                        iostats = json_decode(stats_file.read())
-                except FileNotFoundError:
-                    iostats = {}
 
+                iostats = decode_iostats(subdir / IOSTATS_FILE, decoder)
                 io_metrics = io_metrics_map(metrics, blk_sz)
 
                 # generate row in the processed results:
@@ -194,6 +222,8 @@ def collect_results_to_csv(res_dir: Path):
 
 if __name__ == '__main__':
     res_dir = RESULTS_ROOT
-    if len(sys.argv) > 1:
+    csv_out = COLLECTED_RESULTS_CSV
+    if len(sys.argv) > 2:
         res_dir = Path(sys.argv[1])
-    collect_results_to_csv(res_dir)
+        csv_out = Path(sys.argv[2])
+    collect_results_to_csv(res_dir, csv_out)
