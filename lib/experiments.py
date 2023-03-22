@@ -46,7 +46,8 @@ BBASE_WARMUP_TIME = 10
 # Allowed sizes of block groups (in KiB). Database is compiled for each of these sizes.
 # Must be a power of 2 and multiple of block size
 # BLOCK_GROUP_SIZES = [256, 1024, 4096]
-BLOCK_GROUP_SIZES = [256]
+# BLOCK_GROUP_SIZES = [256]
+BLOCK_GROUP_SIZES = [256, 4096]
 
 PG_WORK_MEM = '32MB'
 
@@ -329,6 +330,7 @@ class RuntimePgConfig:
     # PBM-only fields:
     # pbm2 and later:
     pbm_evict_num_samples: Optional[int] = None
+    pbm_evict_num_victims: Optional[int] = None
     pbm_bg_naest_max_age: Optional[float] = None
 
     def config_dict(self) -> Dict[str, str]:

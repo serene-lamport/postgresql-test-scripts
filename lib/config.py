@@ -26,6 +26,7 @@ PG_PASSWD: str = ''
 PG_DATA_ROOT = pathlib.Path('/hdd1/pgdata')
 # this is the device on the host which has the given file path.
 PG_DATA_DEVICE: str = 'sdb/sdb1'
+# TODO replace /sys/block -> /sys/class/block, and make this just `sdb1` since the hierarchy is flat there
 
 # Where to clone/compile everything (absolute path)
 BUILD_ROOT = pathlib.Path('/home/ta3vande/PG_TESTS')

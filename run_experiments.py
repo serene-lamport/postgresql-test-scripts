@@ -156,27 +156,25 @@ def test_micro_parallelism_constant_nqueries() -> Iterable[ExperimentConfig]:
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
-def test_micro_parallelism(seed: Optional[int], selectivity: Optional[float], *,
+def test_micro_parallelism(seeds: List[Optional[int]], selectivity: Optional[float], *,
                            cm=8, parallel_ops: List[int] = None, nsamples: List[int] = None,
                            cache_time: Optional[float] = None, branches: List[PgBranch] = None,
-                           cgmem: Optional[float] = None) \
+                           shmem='2GB', cgmem_gb: float = None) \
         -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
     dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
-    shmem = '2GB'
-    cgroup = CGroupConfig(cgmem) if cgmem is not None else None
+    cgroup = CGroupConfig(cgmem_gb) if cgmem_gb is not None else None
     if parallel_ops is None:
         parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
     if nsamples is None:
         nsamples = [1, 2, 5, 10, 20]
     # TODO make cache_time a list! (or, have a single list of (nsamples, cache time) tuples)
-    if seed is None:
-        seed = 12345  # default seed
     if branches is None:
         branches = POSTGRES_ALL_BRANCHES
 
-    for nworkers, branch in product(parallel_ops, branches):
+    for seed, nworkers, branch in product(seeds, parallel_ops, branches):
+        seed = seed if seed is not None else 12345  # default seed
         dbbin = DbBin(branch)
         dbconf = DbConfig(dbbin, dbdata)
         bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
@@ -193,34 +191,43 @@ def test_micro_parallelism(seed: Optional[int], selectivity: Optional[float], *,
 
 
 def test_micro_parallelism_with_selectivity(selectivity: float) -> Iterable[ExperimentConfig]:
-    return test_micro_parallelism(None, selectivity)
+    return test_micro_parallelism([None], selectivity)
 
 
 def test_micro_parallelism_same_stream_count(seed: int, parallel_ops=None) -> Iterable[ExperimentConfig]:
-    return test_micro_parallelism(seed, None, cm=6, parallel_ops=parallel_ops, nsamples=[1, 5, 10])
+    return test_micro_parallelism([seed], None, cm=6, parallel_ops=parallel_ops, nsamples=[1, 5, 10])
 
 
-def test_large_mem(seed: int, blksz=8) -> Iterable[ExperimentConfig]:
+def test_large_mem(seeds: List[int], blksz=DEFAULT_BLOCK_SIZE, bgsz=DEFAULT_BG_SIZE, *, nvictims=1) -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
     dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=100, block_size=blksz)
-    bbconf = BBaseConfig(nworkers=4, seed=seed, workload=WORKLOAD_MICRO_COUNTS.with_multiplier(1).with_selectivity(0.5))
     shmem = '28GB'
     # nsamples = [5, 10]
-    # nsamples = [10]
+    nsamples = [10]
+    # nv = 10
     # nsamples = [1]
-    nsamples = [10, 1]
+    # nsamples = [10, 1]
 
-    for branch in [BRANCH_PBM1, BRANCH_PBM2, BRANCH_POSTGRES_BASE]:
-    # for branch in [BRANCH_PBM2]:
-    # for branch in [BRANCH_POSTGRES_BASE, BRANCH_PBM1]:
-        dbbin = DbBin(branch, block_size=blksz)
+    # branches = [BRANCH_PBM1, BRANCH_PBM2, BRANCH_POSTGRES_BASE]
+    branches = [BRANCH_PBM2]
+    # branches = [BRANCH_PBM1, BRANCH_PBM2]
+    # branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1]
+    for seed, branch in product(seeds, branches):
+        bbconf = BBaseConfig(nworkers=4, seed=seed,
+                             workload=WORKLOAD_MICRO_COUNTS.with_multiplier(1).with_selectivity(0.5))
+        dbbin = DbBin(branch, block_size=blksz, bg_size=bgsz)
         dbconf = DbConfig(dbbin, dbdata)
         for ns in branch_samples(branch, nsamples):
             ct = [10.0] if branch.accepts_nsamples else [None]
-            # for t in [1.0, 10.0, 100.0, 1000.0]:
-            # for t in [1.0]:
+            if branch.accepts_nsamples:
+                nv = nvictims
+                ns = ns * nv
+            else:
+                nv = None
             for t in ct:
-                pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=ns, pbm_bg_naest_max_age=t, track_io_timing='on')
+                pgconf = RuntimePgConfig(shared_buffers=shmem, pbm_evict_num_samples=ns, pbm_evict_num_victims=nv,
+                                         pbm_bg_naest_max_age=t,
+                                         track_io_timing='on')
 
                 yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
@@ -277,7 +284,6 @@ if __name__ == '__main__':
     # seeds = [16312, 22289, 16987, 6262, 32495, 5786]
     # seeds = [24267, 3636, 9774, 19740, 4448, 19357, 15930, 3127, 4385, 6870, 27272, 14943, 13146, 32540]
     seeds = [16312, 22289, 16987, 6262, 32495, 5786, 24267, 3636, 9774, 19740, 4448, 19357, 15930, 3127, 4385, 6870, 27272, 14943, 13146, 32540]
-    seeds2 = [5786, 24267, 3636, 9774, 19740, 4448, 19357, 15930, 3127, 4385, 6870, 27272, 14943, 13146, 32540]  # early ones trimmed off to result test part way...
     # brnchs = [BRANCH_PBM_COMPARE1, BRANCH_PBM_COMPARE2, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1]
     # brnchs = [BRANCH_POSTGRES_BASE, BRANCH_PBM1]
     # brnchs = [BRANCH_PBM2, BRANCH_PBM_COMPARE1]
@@ -291,13 +297,32 @@ if __name__ == '__main__':
     #     run_tests(ename, test_micro_parallelism(s, selectivity=0.3, parallel_ops=[32], nsamples=[1], cache_time=None,
     #                                             branches=brnchs))
 
-    # for s in [12345, 23456, 34567]:
-    #     run_tests('shmem_at_sf100_with_caching_more_iostats', test_large_mem(s, 8))
+    # shmem_at_sf100_with_caching_more_iostats
+    # shmem_at_sf100_with_caching_more_iostats_bs32
+    seeds_sf100 = [12345, 23456, 34567, 5678, 6789]
+    # run_tests('shmem_at_sf100_group_eviction_bgsz4096', test_large_mem(seeds_sf100, 8, 4096))
+    # run_tests('shmem_at_sf100_group_eviction_bgsz4096', test_large_mem(seeds_sf100, 32, 4096))
+
+    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 8, 256, nvictims=10))
+    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 32, 256, nvictims=10))
+    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 8, 4096, nvictims=10))
+    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 32, 4096, nvictims=10))
+    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 8, 256, nvictims=1))
+    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 32, 256, nvictims=1))
+    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 8, 4096, nvictims=1))
+    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 32, 4096, nvictims=1))
 
     # Run SF10 experiments with 3GB system memory, so the OS doesn't just cache everything
-    for s in seeds[:6]:
-        run_tests('sampling_overhead',
-                  test_micro_parallelism(s, selectivity=0.3, cm=4, parallel_ops=[32], nsamples=[1, 10], cache_time=10,
-                                         cgmem=3.0, branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2],))
+    # for s in []:  # seeds[:6]:
+    # run_tests('sampling_overhead',
+    #           test_micro_parallelism([], selectivity=0.3, cm=4, parallel_ops=[8], nsamples=[1, 10], cache_time=10,
+    #                                  cgmem_gb=3.0, branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2],))
+
+    # Similar with 2.5 GiB buffer memomry, 0.5 selectivity, 4 parallel streams to more closely mimic the SF100 experiments
+    # for s in seeds[:6]:
+    run_tests('sampling_overhead_2',
+              test_micro_parallelism(seeds[:0], selectivity=0.5, cm=4, parallel_ops=[4], nsamples=[1, 10],
+                                     cache_time=10, shmem='2560MB', cgmem_gb=3.0,
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2],))
 
     ...

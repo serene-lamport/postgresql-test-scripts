@@ -125,6 +125,14 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
     return ax
 
 
+def bar_plot(df_plot: pd.DataFrame, x, y,):
+    grps = df_plot.groupby(x)
+    df_plot = pd.DataFrame(grps[y].mean())
+    df_plot['yerr'] = grps[y].sem() * 1.96
+
+    return df_plot[y].plot.bar(yerr=df_plot.yerr)
+
+
 def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
                 x, xlabels=None, logx=False, xlabel=None,
                 y, ybound=None, ylabel=None,  avg_y_values=False,
@@ -409,9 +417,15 @@ if __name__ == '__main__':
     # shmem_at_sf100_with_caching_2
     # shmem_at_sf100_with_caching_more_iostats
 
+    group_cols = [
+        'experiment', 'branch', 'block_size', 'block_group_size',
+        # 'pbm_evict_num_samples',
+        # 'pbm_bg_naest_max_age'
+    ]
 
     df_g = df[[
-        'experiment', 'branch', 'block_size', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age',
+        *group_cols,
+
         'hit_rate', 'minutes_total', 'minutes_stream', 'pg_mb_per_s', 'hw_mb_per_s',
         # 'data_read_gb',
         # postgres DB stats
@@ -421,21 +435,43 @@ if __name__ == '__main__':
         # calculated:
         'pg_iolat', 'hw_iolat', 'pg_disk_wait', 'hw_disk_wait',
     ]]
-    g = df_g.groupby(['experiment', 'branch', 'block_size', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age'])
+    g = df_g.groupby(group_cols)
     res = g.mean()
     res['min_t_ci'] = g['minutes_total'].sem() * 1.96
     res['min_s_ci'] = g['minutes_stream'].sem() * 1.96
     res['hit_rate_ci'] = g['hit_rate'].sem() * 1.96
 
-    e1 = 'comparing_bg_lock_types'
-    e2 = 'comparing_bg_lock_types_2'
-    e3 = 'comparing_bg_lock_types_3'
-    e4 = 'comparing_bg_lock_types_4'
-
-    es = [e1, e2, e3, e4]
+    # e1 = 'comparing_bg_lock_types'
+    # e2 = 'comparing_bg_lock_types_2'
+    # e3 = 'comparing_bg_lock_types_3'
+    # e4 = 'comparing_bg_lock_types_4'
+    #
+    # es = [e1, e2, e3, e4]
 
     cg = df[df.experiment == 'test_cgroup']
 
-    e = 'shmem_at_sf100_with_caching_more_iostats'
+    # e1 = 'shmem_at_sf100_with_caching_more_iostats'
+    # e2 = 'shmem_at_sf100_with_caching_more_iostats_bs32'
+
+    e = 'shmem_at_sf100_group_eviction'
+    e4096 = 'shmem_at_sf100_group_eviction_bgsz4096'
+
+    f = 'sampling_overhead'
+    g = 'sampling_overhead_2'
+
+    e1 = 'shmem_at_sf100_multi_evict_nv1'
+    e10 = 'shmem_at_sf100_multi_evict_nv10'
+
+    iostat_cols = ['pg_iolat', 'hw_iolat', 'pg_disk_wait', 'hw_disk_wait']
+
+
+
+    # TODO bar charts!
+    # res.loc[f].hit_rate.plot.bar(yerr=res.loc[f].hit_rate_ci)
+    # res.minutes_total.plot.bar(yerr=res.min_t_ci)
+    # plt.show()
+
+    # bar_plot(df[df.experiment == 'sampling_overhead'], x=['branch', 'pbm_evict_num_samples'], y='hit_rate')
+    # plt.show()
 
 
