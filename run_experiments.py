@@ -3,8 +3,10 @@ from dataclasses import replace
 from typing import Iterable
 from datetime import datetime as dt
 from itertools import product
+import sys
 
 from lib.experiments import *
+import lib.config as config
 
 
 ###################
@@ -15,7 +17,10 @@ from lib.experiments import *
 NUM_EXPERIMENTS_RUN: int = 0
 
 
-def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, dry_run=False):
+rand_seeds = [16312, 22289, 16987, 6262, 32495, 5786, 24267, 3636, 9774, 19740, 4448, 19357, 15930, 3127, 4385, 6870, 27272, 14943, 13146, 32540]
+
+
+def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, skip=0, dry_run=False):
     """
     Run a set of experiments.
     """
@@ -24,11 +29,15 @@ def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, dry_run=False
     count = len(tests)
     c_len = len(str(count))
     global_start = dt.now()
-    for i, exp in enumerate(tests):
+
+    if len(tests) == 0:
+        return
+
+    for i, exp in enumerate(tests[skip:]):
         start = dt.now()
         ts_str = start.strftime('%H:%M:%S')
 
-        print_str = f'===     STARTING EXPERIMENT  [{NUM_EXPERIMENTS_RUN}] {exp_name} #{i+1:{c_len}}/{count}  at  {ts_str}     ==='
+        print_str = f'===     STARTING EXPERIMENT  [{NUM_EXPERIMENTS_RUN}] {exp_name} #{i+skip+1:{c_len}}/{count}  at  {ts_str}     ==='
 
         print('='*len(print_str))
         print(print_str)
@@ -44,7 +53,7 @@ def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, dry_run=False
         elapsed = (end - start)
         e_min = elapsed.seconds // 60
         e_s = elapsed.total_seconds() % 60
-        print_str = f'===     END EXPERIMENT  [{NUM_EXPERIMENTS_RUN}] {exp_name} #{i+1:{c_len}}/{count}  at  {ts_str}  ({e_min}m {e_s:.1f}s)     ==='
+        print_str = f'===     END EXPERIMENT  [{NUM_EXPERIMENTS_RUN}] {exp_name} #{i+skip+1:{c_len}}/{count}  at  {ts_str}  ({e_min}m {e_s:.1f}s)     ==='
 
         print('='*len(print_str))
         print(print_str)
@@ -55,7 +64,7 @@ def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, dry_run=False
     start_t_str = global_start.strftime('%A, %b %d %H:%M:%S')
     end_t_str = global_end.strftime('%A, %b %d %H:%M:%S')
     elapsed = global_end - global_start
-    h = elapsed.seconds // (60*60)
+    h = elapsed.seconds // (60*60) + elapsed.days * 24
     m = (elapsed.seconds % (60*60)) // 60
     s = elapsed.seconds % 60
     elapsed_str = f'{h}h {m}m {s}s'
@@ -156,13 +165,51 @@ def test_micro_parallelism_constant_nqueries() -> Iterable[ExperimentConfig]:
             yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
 
 
+def test_tpcc(seeds: List[int], nsamples: List[int] = None, shmem='2560MB', cgmem=3.0,
+              blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE) -> Iterable[ExperimentConfig]:
+    dbdata = DbData(WORKLOAD_TPCC.workload, sf=100, block_size=blk_sz)
+    cgroup = CGroupConfig(cgmem)
+
+    parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
+    branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3]
+
+    nsamples = nsamples or [1, 10]
+
+    for seed, nworkers, branch in product(seeds, parallel_ops, branches):
+        dbbin = DbBin(branch, block_size=blk_sz, bg_size=bg_sz)
+        dbconf = DbConfig(dbbin, dbdata)
+
+        bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
+                             workload=WORKLOAD_TPCC.with_times(300, 30))
+
+        for ns in branch_samples(branch, nsamples):
+            pgconf = RuntimePgConfig(
+                shared_buffers=shmem,
+                synchronize_seqscans='on',
+                track_io_timing='on',
+                pbm_evict_num_samples=ns,
+                # pbm_evict_num_victims='',
+                pbm_bg_naest_max_age=10 if branch.accepts_nsamples else None,
+                max_pred_locks_per_transaction=128,  # not sure if needed?
+            )
+
+            yield ExperimentConfig(pgconf, dbconf, None, bbconf, cgroup=cgroup)
+
+
 def test_micro_parallelism(seeds: List[Optional[int]], selectivity: Optional[float], *,
-                           cm=8, parallel_ops: List[int] = None, nsamples: List[int] = None,
+                           cm=8, parallel_ops: List[int] = None, nsamples: List[int] = None, nvictims: int = 1,
                            cache_time: Optional[float] = None, branches: List[PgBranch] = None,
-                           shmem='2GB', cgmem_gb: float = None) \
+                           shmem='2GB', cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
+                           data_root: (Path, str) = None, db_host: str = None) \
         -> Iterable[ExperimentConfig]:
+    workload = WORKLOAD_MICRO_COUNTS.workload
+    if data_root is not None:
+        workload = workload.with_host_device(db_host, data_root[1])
+        dbdata = DbData(workload, sf=10, block_size=blk_sz, data_root=data_root[0])
+        # print(f'DbData: {dbdata}')
+    else:
+        dbdata = DbData(workload, sf=10, block_size=blk_sz)
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
-    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=10)
 
     cgroup = CGroupConfig(cgmem_gb) if cgmem_gb is not None else None
     if parallel_ops is None:
@@ -175,19 +222,25 @@ def test_micro_parallelism(seeds: List[Optional[int]], selectivity: Optional[flo
 
     for seed, nworkers, branch in product(seeds, parallel_ops, branches):
         seed = seed if seed is not None else 12345  # default seed
-        dbbin = DbBin(branch)
+        dbbin = DbBin(branch, block_size=blk_sz, bg_size=bg_sz)
         dbconf = DbConfig(dbbin, dbdata)
-        bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
-                             workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm).with_selectivity(selectivity))
+        bbworkload = WORKLOAD_MICRO_COUNTS.with_multiplier(cm).with_selectivity(selectivity)
+        bbworkload.workload = workload
+        bbconf = BBaseConfig(nworkers=nworkers, seed=seed, workload=bbworkload)
 
         for ns in branch_samples(branch, nsamples):
+            nv = nvictims if ns is not None and ns > 1 else None
+            if ns is not None and ns > 1:
+                ns = ns * nv
+                nv = nvictims
             pgconf = RuntimePgConfig(shared_buffers=shmem,
                                      pbm_evict_num_samples=ns,
+                                     pbm_evict_num_victims=nv,
                                      pbm_bg_naest_max_age=cache_time if branch.accepts_nsamples else None,
                                      synchronize_seqscans='on',
                                      track_io_timing='on')
 
-            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf, cgroup=cgroup)
+            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf, cgroup=cgroup, db_host=db_host)
 
 
 def test_micro_parallelism_with_selectivity(selectivity: float) -> Iterable[ExperimentConfig]:
@@ -198,10 +251,10 @@ def test_micro_parallelism_same_stream_count(seed: int, parallel_ops=None) -> It
     return test_micro_parallelism([seed], None, cm=6, parallel_ops=parallel_ops, nsamples=[1, 5, 10])
 
 
-def test_large_mem(seeds: List[int], blksz=DEFAULT_BLOCK_SIZE, bgsz=DEFAULT_BG_SIZE, *, nvictims=1) -> Iterable[ExperimentConfig]:
+def test_large_mem(seeds: List[int], blksz=DEFAULT_BLOCK_SIZE, bgsz=DEFAULT_BG_SIZE, *, nvictims=1, sf=100, cgroup=None, shmem='28GB', cm=1) -> Iterable[ExperimentConfig]:
     dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
-    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=100, block_size=blksz)
-    shmem = '28GB'
+    dbdata = DbData(WORKLOAD_MICRO_COUNTS.workload, sf=sf, block_size=blksz)
+
     # nsamples = [5, 10]
     nsamples = [10]
     # nv = 10
@@ -214,7 +267,7 @@ def test_large_mem(seeds: List[int], blksz=DEFAULT_BLOCK_SIZE, bgsz=DEFAULT_BG_S
     # branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1]
     for seed, branch in product(seeds, branches):
         bbconf = BBaseConfig(nworkers=4, seed=seed,
-                             workload=WORKLOAD_MICRO_COUNTS.with_multiplier(1).with_selectivity(0.5))
+                             workload=WORKLOAD_MICRO_COUNTS.with_multiplier(cm).with_selectivity(0.5))
         dbbin = DbBin(branch, block_size=blksz, bg_size=bgsz)
         dbconf = DbConfig(dbbin, dbdata)
         for ns in branch_samples(branch, nsamples):
@@ -229,7 +282,7 @@ def test_large_mem(seeds: List[int], blksz=DEFAULT_BLOCK_SIZE, bgsz=DEFAULT_BG_S
                                          pbm_bg_naest_max_age=t,
                                          track_io_timing='on')
 
-                yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf)
+                yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf, cgroup=cgroup)
 
 
 def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], dry=True):
@@ -242,7 +295,8 @@ def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], d
         run_tests(e_str, not_tried)
 
 
-if __name__ == '__main__':
+def main_tpch():
+
     # Run actual experiments
     # run_tests('test_cgroup_1', _TEST_test_script())
 
@@ -283,7 +337,6 @@ if __name__ == '__main__':
     # check whether spinlock vs LWLock makes a difference without any other changes
     # seeds = [16312, 22289, 16987, 6262, 32495, 5786]
     # seeds = [24267, 3636, 9774, 19740, 4448, 19357, 15930, 3127, 4385, 6870, 27272, 14943, 13146, 32540]
-    seeds = [16312, 22289, 16987, 6262, 32495, 5786, 24267, 3636, 9774, 19740, 4448, 19357, 15930, 3127, 4385, 6870, 27272, 14943, 13146, 32540]
     # brnchs = [BRANCH_PBM_COMPARE1, BRANCH_PBM_COMPARE2, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1]
     # brnchs = [BRANCH_POSTGRES_BASE, BRANCH_PBM1]
     # brnchs = [BRANCH_PBM2, BRANCH_PBM_COMPARE1]
@@ -303,14 +356,24 @@ if __name__ == '__main__':
     # run_tests('shmem_at_sf100_group_eviction_bgsz4096', test_large_mem(seeds_sf100, 8, 4096))
     # run_tests('shmem_at_sf100_group_eviction_bgsz4096', test_large_mem(seeds_sf100, 32, 4096))
 
-    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 8, 256, nvictims=10))
-    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 32, 256, nvictims=10))
-    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 8, 4096, nvictims=10))
-    run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 32, 4096, nvictims=10))
-    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 8, 256, nvictims=1))
-    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 32, 256, nvictims=1))
-    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 8, 4096, nvictims=1))
-    run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 32, 4096, nvictims=1))
+    # run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 8, 256, nvictims=10))
+    # run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 32, 256, nvictims=10))
+    # run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 8, 4096, nvictims=10))
+    # run_tests('shmem_at_sf100_multi_evict_nv10', test_large_mem(seeds_sf100, 32, 4096, nvictims=10))
+    # run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 8, 256, nvictims=1))
+    # run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 32, 256, nvictims=1))
+    # run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 8, 4096, nvictims=1))
+    # run_tests('shmem_at_sf100_multi_evict_nv1', test_large_mem(seeds_sf100, 32, 4096, nvictims=1))
+
+    # replicate experiments at SF 10
+    # run_tests('shmem_multi_evict_sf10_nv10_2', test_large_mem(seeds_sf100, 8, 256, nvictims=10, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
+    # run_tests('shmem_multi_evict_sf10_nv10_2', test_large_mem(seeds_sf100, 32, 256, nvictims=10, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
+    # run_tests('shmem_multi_evict_sf10_nv10_2', test_large_mem(seeds_sf100, 8, 4096, nvictims=10, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
+    # run_tests('shmem_multi_evict_sf10_nv10_2', test_large_mem(seeds_sf100, 32, 4096, nvictims=10, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
+    # run_tests('shmem_multi_evict_sf10_nv1_2', test_large_mem(seeds_sf100, 8, 256, nvictims=1, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
+    # run_tests('shmem_multi_evict_sf10_nv1_2', test_large_mem(seeds_sf100, 32, 256, nvictims=1, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
+    # run_tests('shmem_multi_evict_sf10_nv1_2', test_large_mem(seeds_sf100, 8, 4096, nvictims=1, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
+    # run_tests('shmem_multi_evict_sf10_nv1_2', test_large_mem(seeds_sf100, 32, 4096, nvictims=1, sf=10, shmem='2560MB', cm=4, cgroup=CGroupConfig(3.0)))
 
     # Run SF10 experiments with 3GB system memory, so the OS doesn't just cache everything
     # for s in []:  # seeds[:6]:
@@ -319,10 +382,107 @@ if __name__ == '__main__':
     #                                  cgmem_gb=3.0, branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2],))
 
     # Similar with 2.5 GiB buffer memomry, 0.5 selectivity, 4 parallel streams to more closely mimic the SF100 experiments
-    # for s in seeds[:6]:
-    run_tests('sampling_overhead_2',
-              test_micro_parallelism(seeds[:0], selectivity=0.5, cm=4, parallel_ops=[4], nsamples=[1, 10],
-                                     cache_time=10, shmem='2560MB', cgmem_gb=3.0,
-                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2],))
+    # run_tests('parallelism_2',
+    #           test_micro_parallelism(rand_seeds[0:3], selectivity=0.4, cm=1, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+    #                                  nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0,
+    #                                  branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],))
+    # TODO ^ shows base == pbm1?? why? :(
 
+
+    run_tests('parallelism_nocgroup_1',
+              test_micro_parallelism(rand_seeds[6:6], selectivity=0.3, cm=6, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=None,
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],))
+    run_tests('parallelism_nocgroup_1',
+              test_micro_parallelism(rand_seeds[6:6], selectivity=0.3, cm=6, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=None, nvictims=10,
+                                     branches=[BRANCH_PBM2,]))  # BRANCH_PBM3],))
+    # Done for: 0:6
+
+    run_tests('parallelism_nocgroup_largeblks_1',
+              test_micro_parallelism(rand_seeds[6:6], selectivity=0.3, cm=6, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=None, blk_sz=32, bg_sz=4096,
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],))
+    run_tests('parallelism_nocgroup_largeblks_1',
+              test_micro_parallelism(rand_seeds[6:6], selectivity=0.3, cm=6, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=None, nvictims=10, blk_sz=32, bg_sz=4096,
+                                     branches=[BRANCH_PBM2,]))  # BRANCH_PBM3],))
+    # Done for: 0:6
+
+    run_tests('parallelism_cgroup_largeblks_1',
+              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],))
+    run_tests('parallelism_cgroup_largeblks_1',
+              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, nvictims=10, blk_sz=32, bg_sz=4096,
+                                     branches=[BRANCH_PBM2,]))  # BRANCH_PBM3],))
+    # Done for: 0:3
+
+    run_tests('parallelism_cgroup_sel50_2',
+              test_micro_parallelism(rand_seeds[0:3], selectivity=0.5, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],))
+    # Done for: 0:3
+
+
+    # TODO test with higher selectivity to match the "largemem" tests?
+
+
+# Run the same test on an ssd on tem06 instead.
+def ssd_tests():
+    data_root = pathlib.Path('/hdd2/pgdata')
+    dev_stats = 'sda/sda3'
+    run_tests('parallelism_cgroup_largeblks_ssd_2',
+              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],
+                                     data_root=(data_root, dev_stats), db_host='tem06'))
+
+    # repeat with 10 "victims" bulk evictions
+    run_tests('parallelism_cgroup_largeblks_ssd_2',
+              test_micro_parallelism(rand_seeds[0:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
+                                     branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10,
+                                     data_root=(data_root, dev_stats), db_host='tem06'))
+
+    # repeat with small blocks
+    run_tests('parallelism_cgroup_smallblks_ssd_2',
+              test_micro_parallelism(rand_seeds[0:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0,
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],
+                                     data_root=(data_root, dev_stats), db_host='tem06'))
+    run_tests('parallelism_cgroup_smallblks_ssd_2',
+              test_micro_parallelism(rand_seeds[0:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+                                     nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0,
+                                     branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10,
+                                     data_root=(data_root, dev_stats), db_host='tem06'))
+
+
+def main_tpcc():
     ...
+    # run_tests('tpcc_basic_parallelism', test_tpcc(rand_seeds[:6],))
+    # run_tests('tpcc_basic_parallelism_largeblks_2', test_tpcc(rand_seeds[:6], blk_sz=32, bg_sz=4096))
+
+
+
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1:
+        workload_type = sys.argv[1].lower()
+    else:
+        workload_type = 'tpch'
+
+    # print(f'workload = {workload_type}')
+
+    if workload_type == 'tpch':
+        main_tpch()
+    elif workload_type == 'tpcc':
+        main_tpcc()
+    elif workload_type == 'tpch_ssd':
+        ssd_tests()
+
+    else:
+        print(f'unknown workload type "{workload_type}"!')
+
+    # main_tpch()

@@ -24,7 +24,7 @@ from fabric import Connection as FabConnection
 import xml.etree.ElementTree as ET
 import tqdm
 from collections import defaultdict
-from dataclasses import dataclass, asdict, fields, field
+from dataclasses import dataclass, asdict, fields, field, replace
 import pandas as pd
 
 from lib.config import *
@@ -70,6 +70,12 @@ class Workload:
 
     def db_name(self, sf: int):
         return f'{self.name.upper()}_{sf}'
+
+    def with_host_device(self, host: str, dev: str):
+        return replace(self, default_db_host=host, device=dev)
+
+    def is_tpch(self):
+        return self.name.upper() == 'TPCH'
 
 
 @dataclass
@@ -229,10 +235,11 @@ class DbData:
     workload: Workload
     sf: int
     block_size: int = DEFAULT_BLOCK_SIZE
+    data_root: Path = PG_DEFAULT_DATA_ROOT
 
     @property
     def data_path(self) -> Path:
-        return PG_DATA_ROOT / f'pg_{self.workload.name.lower()}_sf{self.sf}_blksz{self.block_size}'
+        return self.data_root / f'pg_{self.workload.name.lower()}_sf{self.sf}_blksz{self.block_size}'
 
     @property
     def db_name(self) -> str:
@@ -270,6 +277,7 @@ class DbConfig:
 
     def to_config_key(self) -> ConfigKey:
         return ConfigKey(sf=self.data.sf, blk_sz=self.bin.block_size)
+        # TODO update this to include host? (or just make it host:directory...)
 
     def to_config_map(self) -> dict:
         return {
@@ -332,6 +340,17 @@ class RuntimePgConfig:
     pbm_evict_num_samples: Optional[int] = None
     pbm_evict_num_victims: Optional[int] = None
     pbm_bg_naest_max_age: Optional[float] = None
+    max_pred_locks_per_transaction: Optional[int] = None
+
+    # @property
+    # def effective_cache_size(self):
+    #     return self.shared_buffers
+
+    # TODO should we include planner cost constants in the config?
+    # Relevant ones:
+    #  - effective_cache_size: effective total cache memory (including OS cache)
+    #  - seq_page_cost and random_page_cost: random should probably be ~100 to be in line with the hard drive stats...
+
 
     def config_dict(self) -> Dict[str, str]:
         return {k: (str(v) if v is not None else None) for k, v in asdict(self).items()}
@@ -647,15 +666,16 @@ def pg_init_local_db(cl: Cluster):
     })
 
 
-def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: RuntimePgConfig):
+def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: RuntimePgConfig, db_host: str):
     """Configure a PostgreSQL installation from a different host (the benchmark client).
     This configures it with essentially no security at all; we assume the host is not accessible
     to the general internet. (in any case, there is nothing on the database except test data)
     """
-    local_temp_path = 'temp_pg.conf'
+    local_temp_path = f'{db_host}_temp_pg.conf'
     remote_path = str(dbconf.data.data_path / 'postgresql.conf')
 
-    # print(f'Configuring PostgreSQL on remote host, config file at: {remote_path}')
+    # print(f'Configuring PostgreSQL on remote host {db_host}, config file at: {remote_path}    local={local_temp_path}')
+    # print(f'dbconf = {dbconf}')
 
     conn.get(remote_path, local_temp_path)
     cf = ConfigFile(local_temp_path)
@@ -784,7 +804,7 @@ def run_bbase_test(exp: ExperimentConfig):
     workload = bbconf.workload.workload
     db_host = exp.db_host
     bb_workload_name = workload.name.lower()
-    temp_bbase_config = BUILD_ROOT / f'bbase_{bb_workload_name}_config.xml'
+    temp_bbase_config = BUILD_ROOT / f'bbase_{bb_workload_name}_{db_host}_config.xml'
 
     # sanity checks
     assert dbconf.check_consistent(), "Error with the DB configuration!"
@@ -793,14 +813,14 @@ def run_bbase_test(exp: ExperimentConfig):
     create_bbase_config(dbconf.sf, bbconf, temp_bbase_config, host=db_host)
 
     with FabConnection(db_host) as conn:
-        config_remote_postgres(conn, dbconf, pgconf)
+        config_remote_postgres(conn, dbconf, pgconf, db_host)
         start_remote_postgres(conn, dbconf, cgroup=exp.cgroup)
         # empty the buffer cache on remote host
         conn.run('echo 1 | sudo tee /proc/sys/vm/drop_caches', hide=True)
 
     try:
         # prewarm lineitem table if desired (TPCH only)
-        if bbconf.prewarm and workload is TPCH:
+        if bbconf.prewarm and workload.is_tpch():
             print(f'Pre-warming cache for lineitem table...')
             prewarm_lineitem(dbconf.data, db_host)
 
@@ -829,7 +849,7 @@ def run_bbase_test(exp: ExperimentConfig):
 
     finally:
         with FabConnection(db_host) as conn:
-            stop_remote_postgres(conn, dbconf, immediate=workload is TPCC)
+            stop_remote_postgres(conn, dbconf, immediate=not workload.is_tpch())
 
 
 def pg_exec_file(conn: PgConnection, file):
@@ -892,7 +912,7 @@ def create_and_populate_tpch_local(case: DbConfig):
 
 def tpcc_src_data_dir(case: DbConfig) -> Path:
     """Name of directory to copy TPCC data so we can copy it instead of re-generating every time."""
-    return PG_DATA_ROOT / f'src_tpcc_sf{case.sf}_blksz{case.block_size}'
+    return case.data.data_root / f'src_tpcc_sf{case.sf}_blksz{case.block_size}'
 
 
 def create_and_populate_tpcc_local(case: DbConfig):
@@ -1032,15 +1052,16 @@ def read_constraints_indexes(pgconn: PgConnection):
     return constraints, indexes
 
 
-def setup_indexes_cluster_tpch(blk_sz: int, sf: int, db_host: str, *, prev: DbSetup, new: DbSetup):
+def setup_indexes_cluster_tpch(blk_sz: int, sf: int, db_host: str, *, prev: DbSetup, new: DbSetup, dbconf: DbConfig = None):
     """Change indexes and clustering on the database. Remembers the changes in `last_config.json`"""
 
     with FabConnection(db_host) as fabconn:
-        dbbin = DbBin(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz)
-        dbdata = DbData(workload=TPCH, sf=sf, block_size=blk_sz)
-        dbconf = DbConfig(bin=dbbin, data=dbdata)
+        if dbconf is None:
+            dbbin = DbBin(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz)
+            dbdata = DbData(workload=TPCH, sf=sf, block_size=blk_sz)
+            dbconf = DbConfig(bin=dbbin, data=dbdata)
         # Use large amount of memory for creating indexes
-        config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'))
+        config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'), db_host)
         start_remote_postgres(fabconn, dbconf)
 
         try:
@@ -1144,16 +1165,19 @@ def one_time_benchbase_setup():
     install_benchbase()
 
 
-def gen_data_tpch(sf: int, blk_sz: int):
+def gen_data_tpch(sf: int, blk_sz: int, data_root: Optional[str]):
     if sf is None:
         raise Exception(f'Must specify scale factor when loading data!')
 
     # Generate test data (only base branch is needed for generating data)
     print('--------------------------------------------------------------------------------')
-    print(f'---- Initializing TPCH data for blk_sz={blk_sz}, sf={sf}')
+    print(f'---- Initializing TPCH data for blk_sz={blk_sz}, sf={sf}, dir={data_root}')
     print('--------------------------------------------------------------------------------')
+    if data_root is not None:
+        dbdata = DbData(TPCH, sf=sf, block_size=blk_sz, data_root=Path(data_root))
+    else:
+        dbdata = DbData(TPCH, sf=sf, block_size=blk_sz)
     dbbin = DbBin(BRANCH_POSTGRES_BASE, block_size=blk_sz)
-    dbdata = DbData(TPCH, sf=sf, block_size=blk_sz)
     dbconf = DbConfig(dbbin, dbdata)
     create_and_populate_tpch_local(dbconf)
 
@@ -1185,7 +1209,7 @@ def drop_all_indexes_tpch(sf: int, blk_sz: int, db_host: str):
     dbdata = DbData(TPCH, sf=sf, block_size=blk_sz)
     dbconf = DbConfig(dbbin, dbdata)
     with FabConnection(db_host) as fabconn:
-        config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'))
+        config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'), db_host)
         start_remote_postgres(fabconn, dbconf)
 
         try:
@@ -1258,7 +1282,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
 
     sf = dbconf.sf
     blk_sz = dbconf.block_size
-    is_tpch = (bbconf.workload.workload is TPCH)
+    is_tpch = bbconf.workload.workload.is_tpch()
 
     # Check current status of indexes & clustering in the database
     if is_tpch:
@@ -1306,14 +1330,14 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         s = '' if s == 0 else f' {s} s'
         print(f'==   Time:                  {t // 60} min{s}')
     print(f'==   Terminals:             {bbconf.nworkers}')
-    print(f'==   PBM num samples:       {pgconf.pbm_evict_num_samples}')
+    print(f'==   PBM num samples:       {pgconf.pbm_evict_num_samples}  (victims={pgconf.pbm_evict_num_victims})')
     print(f'== Storing results to {results_dir}')
     print(f'======================================================================')
 
     if is_tpch:
         # Make sure we have the desired indexes & clustering if applicable
         print(f'~~~~~~~~~~ Setup indexes={dbsetup.indexes}, clustering={dbsetup.clustering} for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
-        constraints, indexes = setup_indexes_cluster_tpch(blk_sz, sf, exp_config.db_host,
+        constraints, indexes = setup_indexes_cluster_tpch(blk_sz, sf, exp_config.db_host, dbconf=exp_config.dbconf,
                                                           prev=prev_setup, new=dbsetup)
 
         # remember when indexes and constraints are defined in case we want to double check later...

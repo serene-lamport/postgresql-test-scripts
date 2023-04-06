@@ -23,7 +23,7 @@ PG_USER: str = 'ta3vande'
 PG_PASSWD: str = ''
 
 # Postgres data files (absolute path)
-PG_DATA_ROOT = pathlib.Path('/hdd1/pgdata')
+PG_DEFAULT_DATA_ROOT = pathlib.Path('/hdd1/pgdata')
 # this is the device on the host which has the given file path.
 PG_DATA_DEVICE: str = 'sdb/sdb1'
 # TODO replace /sys/block -> /sys/class/block, and make this just `sdb1` since the hierarchy is flat there

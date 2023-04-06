@@ -74,6 +74,7 @@ def main():
     parser.add_argument('-sel', '--selectivity', type=float, default=None, dest='selectivity',
                         help='Selectivity of the "alt" query types')
     parser.add_argument('--host', type=str, default=None, help='Database hostname (if non-default)')
+    parser.add_argument('--data_root', type=str, default=None, help='Location for the database')
     args = parser.parse_args()
 
     if args.action == 'pg_setup':
@@ -95,7 +96,7 @@ def main():
         install_benchbase()
 
     elif args.action == 'gen_data_tpch':
-        gen_data_tpch(args.sf, blk_sz=args.blk_sz)
+        gen_data_tpch(args.sf, blk_sz=args.blk_sz, data_root=args.data_root)
 
     elif args.action == 'gen_data_tpcc':
         gen_data_tpcc(args.sf, blk_sz=args.blk_sz)
