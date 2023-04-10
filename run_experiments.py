@@ -417,13 +417,13 @@ def main_tpch():
               test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
                                      nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, nvictims=10, blk_sz=32, bg_sz=4096,
                                      branches=[BRANCH_PBM2,]))  # BRANCH_PBM3],))
-    # Done for: 0:3
+    # Done for: 3:3
 
     run_tests('parallelism_cgroup_sel50_2',
-              test_micro_parallelism(rand_seeds[0:3], selectivity=0.5, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+              test_micro_parallelism(rand_seeds[3:3], selectivity=0.5, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
                                      nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
                                      branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],))
-    # Done for: 0:3
+    # Done for: 3:3
 
 
     # TODO test with higher selectivity to match the "largemem" tests?
@@ -441,19 +441,19 @@ def ssd_tests():
 
     # repeat with 10 "victims" bulk evictions
     run_tests('parallelism_cgroup_largeblks_ssd_2',
-              test_micro_parallelism(rand_seeds[0:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
                                      nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
                                      branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10,
                                      data_root=(data_root, dev_stats), db_host='tem06'))
 
     # repeat with small blocks
     run_tests('parallelism_cgroup_smallblks_ssd_2',
-              test_micro_parallelism(rand_seeds[0:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
                                      nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0,
                                      branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],
                                      data_root=(data_root, dev_stats), db_host='tem06'))
     run_tests('parallelism_cgroup_smallblks_ssd_2',
-              test_micro_parallelism(rand_seeds[0:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
+              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
                                      nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0,
                                      branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10,
                                      data_root=(data_root, dev_stats), db_host='tem06'))

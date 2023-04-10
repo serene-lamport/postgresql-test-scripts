@@ -215,6 +215,26 @@ def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
 #                     )
 
 
+def add_reads(df: pd.DataFrame) -> pd.DataFrame:
+    # convert hardware stat columns to numeric
+    for c in SYSBLOCKSTAT_COLS:
+        df[c] = pd.to_numeric(df[c])
+    df['hw_read_gb'] = df.sectors_read * 512 / 2**30
+
+    df['hw_mb_per_s'] = df.hw_read_gb * 1024 * 10**9 / df.total_time_ns
+    df['pg_mb_per_s'] = df.data_read_gb * 1024 * 10**9 / df.total_time_ns
+    df['minutes_total'] = df.total_time_ns / 10**9 / 60
+    df['minutes_stream'] = df.max_stream_s / 60
+
+    df['pg_iolat'] = (df.db_blk_read_time / 1000) / (df.db_blks_read * df.block_size / 2**20)  # ms/block to s/GiB
+    df['hw_iolat'] = (df.read_ticks / 1000) / (df.sectors_read * 512 / 2**30)  # ms/sectors to s/GiB
+
+    # disk wait time (minutes) (concurrent waits including separate worker threads are added)
+    df['pg_disk_wait'] = df.db_blk_read_time / 1000 / 60
+    df['hw_disk_wait'] = df.read_ticks / 1000 / 60
+
+    return df
+
 
 def plot_old_results(df: pd.DataFrame):
     # # plot some experiments
@@ -397,70 +417,106 @@ def plot_old_results(df: pd.DataFrame):
                  y='data_processed_per_s', ylabel='Data processed/s (GB)', avg_y_values=True,
                  title=f'Data processed per second vs parallelism (samples = {nsamples})')
 
-def plot_figures_9(df: pd.DataFrame):
+
+def plot_figures_parallelism(df: pd.DataFrame, exp: str, subtitle: str, runtime=True, data_processed=False, iorate=True, iolat=True,
+                             time_ybound=None):
     group_cols = ['branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims']
-    format_group = format_branch_ns_nv
+    parallelism_common_args = {
+        'x': 'parallelism', 'xsort': True, 'xlabel': 'Parallelism', 'xlabels': 'parallelism',
+        'group': group_cols, 'grp_name': format_branch_ns_nv, 'legend_title': 'Policy',
+        'avg_y_values': True,
+    }
     plots_hitrate_runtime = lambda: [
-        plot_exp(df, 'parallelism_cgroup_largeblks_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hit_rate', ylabel='Hit rate', avg_y_values=True,
-                 title=f'Hit rate vs parallelism - 3GB cgroup'),
-        plot_exp(df, 'parallelism_cgroup_largeblks_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='minutes_total', ylabel='Time (min)', avg_y_values=True, ybound=(0, 70),
-                 title=f'Time vs parallelism - 3GB cgroup'),
-
-        plot_exp(df, 'parallelism_nocgroup_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hit_rate', ylabel='Hit rate', avg_y_values=True,
-                 title=f'Hit rate vs parallelism - no cgroup'),
-        # Skip runtime for the no cgroup version, not that interesting
-        # plot_exp(df, 'parallelism_nocgroup_1', group=group_cols,
-        #          x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-        #          y='minutes_total', ylabel='Time (min)', avg_y_values=True,
-        #          title=f'Time vs parallelism - no cgroup'),
-
-        plot_exp(df, 'parallelism_nocgroup_largeblks_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hit_rate', ylabel='Hit rate', avg_y_values=True,
-                 title=f'Hit rate vs parallelism - no cgroup large blocks'),
-        # plot_exp(df, 'parallelism_nocgroup_largeblks_1', group=group_cols,
-        #          x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-        #          y='minutes_total', ylabel='Time (min)', avg_y_values=True,
-        #          title=f'Time vs parallelism - no cgroup large blocks'),
+        plot_exp(df, exp, y='hit_rate', ylabel='Hit rate',
+                 title=f'Hit rate vs parallelism - {subtitle}', **parallelism_common_args),
+        plot_exp(df, exp, y='minutes_total', ylabel='Time (min)', ybound=time_ybound,
+                 title=f'Time vs parallelism - {subtitle}', **parallelism_common_args),
     ]
 
     plots_data_processed = lambda: [
-        plot_exp(df, 'parallelism_cgroup_largeblks_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='data_processed_per_stream', ylabel='data_processed', avg_y_values=True,
-                 title=f'data processed vs parallelism - 3GB cgroup'),
-        plot_exp(df, 'parallelism_nocgroup_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='data_processed_per_stream', ylabel='data_processed', avg_y_values=True,
-                 title=f'data processed vs parallelism - no cgroup'),
-        plot_exp(df, 'parallelism_nocgroup_largeblks_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='data_processed_per_stream', ylabel='data_processed', avg_y_values=True,
-                 title=f'data processed vs parallelism - no cgroup large blocks'),
+        plot_exp(df, exp, y='data_processed_per_stream', ylabel='data_processed',
+                 title=f'data processed vs parallelism - {subtitle}', **parallelism_common_args),
     ]
 
     plots_iorate = lambda: [
-        plot_exp(df, 'parallelism_cgroup_largeblks_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='pg_mb_per_s', ylabel='IO throughput (MiB/s)', avg_y_values=True,
-                 title=f'Postgres IO rate vs parallelism - 3GB cgroup'),
-        plot_exp(df, 'parallelism_cgroup_largeblks_1', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hw_mb_per_s', ylabel='IO throughput (MiB/s)', avg_y_values=True,
-                 title=f'Hardware IO rate vs parallelism - 3GB cgroup'),
+        plot_exp(df, exp, y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Postgres IO rate vs parallelism - {subtitle}', **parallelism_common_args),
+        plot_exp(df, exp, y='hw_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Hardware IO rate vs parallelism - {subtitle}', **parallelism_common_args),
+    ]
+
+    plots_iolat = lambda: [
+        plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)',
+                 title=f'Postgres IO latency vs parallelism - {subtitle}', **parallelism_common_args),
+        plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)',
+                 title=f'Hardware IO latency vs parallelism - {subtitle}', **parallelism_common_args),
     ]
 
 
     ret_list = [
-        *plots_hitrate_runtime(),
+        *(plots_hitrate_runtime() if runtime else []),
+        *(plots_data_processed() if data_processed else []),
+        *(plots_iorate() if iorate else []),
+        *(plots_iolat() if iolat else []),
+    ]
+    return ret_list
+
+
+
+def plot_figures_9(df: pd.DataFrame):
+    group_cols = ['branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims']
+    parallelism_common_args = {
+        'x': 'parallelism', 'xsort': True, 'xlabel': 'Parallelism', 'xlabels': 'parallelism',
+        'group': group_cols, 'grp_name': format_branch_ns_nv, 'legend_title': 'Policy',
+        'avg_y_values': True,
+    }
+    plots_hitrate_runtime = lambda: [
+        plot_exp(df, 'parallelism_cgroup_largeblks_1', y='hit_rate', ylabel='Hit rate',
+                 title=f'Hit rate vs parallelism - 3GB cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_largeblks_1', y='minutes_total', ylabel='Time (min)',  ybound=(0, 70),
+                 title=f'Time vs parallelism - 3GB cgroup', **parallelism_common_args),
+
+        plot_exp(df, 'parallelism_nocgroup_1', y='hit_rate', ylabel='Hit rate',
+                 title=f'Hit rate vs parallelism - no cgroup', **parallelism_common_args),
+        # Skip runtime for the no cgroup version, not that interesting
+        # plot_exp(df, 'parallelism_nocgroup_1', y='minutes_total', ylabel='Time (min)',
+        #          title=f'Time vs parallelism - no cgroup', **parallelism_common_args),
+
+        plot_exp(df, 'parallelism_nocgroup_largeblks_1', y='hit_rate', ylabel='Hit rate',
+                 title=f'Hit rate vs parallelism - no cgroup large blocks', **parallelism_common_args),
+        # plot_exp(df, 'parallelism_nocgroup_largeblks_1', y='minutes_total', ylabel='Time (min)',
+        #          title=f'Time vs parallelism - no cgroup large blocks', **parallelism_common_args),
+    ]
+
+    plots_data_processed = lambda: [
+        plot_exp(df, 'parallelism_cgroup_largeblks_1', y='data_processed_per_stream', ylabel='data_processed',
+                 title=f'data processed vs parallelism - 3GB cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_nocgroup_1', y='data_processed_per_stream', ylabel='data_processed',
+                 title=f'data processed vs parallelism - no cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_nocgroup_largeblks_1', y='data_processed_per_stream', ylabel='data_processed',
+                 title=f'data processed vs parallelism - no cgroup large blocks', **parallelism_common_args),
+    ]
+
+    plots_iorate = lambda: [
+        plot_exp(df, 'parallelism_cgroup_largeblks_1', y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Postgres IO rate vs parallelism - 3GB cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_largeblks_1', y='hw_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Hardware IO rate vs parallelism - 3GB cgroup', **parallelism_common_args),
+    ]
+
+    plots_iolat = lambda: [
+        plot_exp(df, 'parallelism_cgroup_largeblks_1', y='pg_iolat', ylabel='IO latency (s/GiB)',
+                 title=f'Postgres IO latency vs parallelism - 3GB cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_largeblks_1', y='hw_iolat', ylabel='IO latency (s/GiB)',
+                 title=f'Hardware IO latency vs parallelism - 3GB cgroup', **parallelism_common_args),
+    ]
+
+
+    ret_list = [
+        # *plots_hitrate_runtime(),
         # *plots_data_processed(),
-        *plots_iorate(),
+        # *plots_iorate(),
+        *plots_iolat(),
     ]
     return ret_list
 
@@ -468,49 +524,51 @@ def plot_figures_9(df: pd.DataFrame):
 def plot_figures_11_ssd(df: pd.DataFrame):
     group_cols = ['branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims']
     format_group = format_branch_ns_nv
+    parallelism_common_args = {
+        'x': 'parallelism', 'xsort': True, 'xlabel': 'Parallelism', 'xlabels': 'parallelism',
+        'group': group_cols, 'grp_name': format_branch_ns_nv, 'legend_title': 'Policy',
+        'avg_y_values': True,
+    }
     plots_hitrate_runtime = lambda: [
-        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hit_rate', ylabel='Hit rate', avg_y_values=True,
-                 title=f'Hit rate vs parallelism - SSD + 3GB cgroup', legend_title='Policy'),
-        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='minutes_total', ylabel='Time (min)', avg_y_values=True,
-                 title=f'Time vs parallelism - SSD + 3GB cgroup', legend_title='Policy'),
+        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', y='hit_rate', ylabel='Hit rate',
+                 title=f'Hit rate vs parallelism - SSD + 3GB cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', y='minutes_total', ylabel='Time (min)',
+                 title=f'Time vs parallelism - SSD + 3GB cgroup', **parallelism_common_args),
 
-        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hit_rate', ylabel='Hit rate', avg_y_values=True,
-                 title=f'Hit rate vs parallelism - SSD + 3GB cgroup small blocks', legend_title='Policy'),
-        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='minutes_total', ylabel='Time (min)', avg_y_values=True,
-                 title=f'Time vs parallelism - SSD + 3GB cgroup small blocks', legend_title='Policy'),
+        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', y='hit_rate', ylabel='Hit rate',
+                 title=f'Hit rate vs parallelism - SSD + 3GB cgroup small blocks', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', y='minutes_total', ylabel='Time (min)',
+                 title=f'Time vs parallelism - SSD + 3GB cgroup small blocks', **parallelism_common_args),
     ]
 
     plots_iorate = lambda: [
-        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='pg_mb_per_s', ylabel='IO throughput (MiB/s)', avg_y_values=True,
-                 title=f'Postgres IO rate vs parallelism - SSD + 3GB cgroup', legend_title='Policy'),
-        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hw_mb_per_s', ylabel='IO throughput (MiB/s)', avg_y_values=True,
-                 title=f'Hardware IO rate vs parallelism - SSD + 3GB cgroup', legend_title='Policy'),
+        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Postgres IO rate vs parallelism - SSD + 3GB cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', y='hw_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Hardware IO rate vs parallelism - SSD + 3GB cgroup', **parallelism_common_args),
 
-        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='pg_mb_per_s', ylabel='IO throughput (MiB/s)', avg_y_values=True,
-                 title=f'Postgres IO rate vs parallelism - SSD + 3GB cgroup small blocks', legend_title='Policy'),
-        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', group=group_cols,
-                 x='parallelism', xsort=True, xlabel='Parallelism', xlabels='parallelism', grp_name=format_group,
-                 y='hw_mb_per_s', ylabel='IO throughput (MiB/s)', avg_y_values=True,
-                 title=f'Hardware IO rate vs parallelism - SSD + 3GB cgroup small blocks', legend_title='Policy'),
+        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Postgres IO rate vs parallelism - SSD + 3GB cgroup small blocks', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', y='hw_mb_per_s', ylabel='IO throughput (MiB/s)',
+                 title=f'Hardware IO rate vs parallelism - SSD + 3GB cgroup small blocks', **parallelism_common_args),
+    ]
+
+    plots_iolat = lambda: [
+        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', y='pg_iolat', ylabel='Avg. IO latency (s/GiB)',
+                 title=f'Postgres IO latency vs parallelism - SSD + 3GB cgroup', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_largeblks_ssd_2', y='hw_iolat', ylabel='Avg. IO latency (s/GiB)',
+                 title=f'Hardware IO latency vs parallelism - SSD + 3GB cgroup', **parallelism_common_args),
+
+        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', y='pg_iolat', ylabel='Avg. IO latency (s/GiB)',
+                 title=f'Postgres IO latency vs parallelism - SSD + 3GB cgroup small blocks', **parallelism_common_args),
+        plot_exp(df, 'parallelism_cgroup_smallblks_ssd_2', y='hw_iolat', ylabel='Avg. IO latency (s/GiB)',
+                 title=f'Hardware IO latency vs parallelism - SSD + 3GB cgroup small blocks', **parallelism_common_args),
     ]
 
     ret_list = [
         *plots_hitrate_runtime(),
         *plots_iorate(),
+        *plots_iolat(),
     ]
     return ret_list
 
@@ -572,7 +630,10 @@ def main(df: pd.DataFrame):
     plots = [
         # *plot_figures_9(df),
         # *plot_figures_10_tpcc(df),
-        *plot_figures_11_ssd(df),
+        # *plot_figures_11_ssd(df),
+        *plot_figures_parallelism(df, 'parallelism_cgroup_largeblks_ssd_2', 'SSD + 3GB cgroup'),  # SSD (11)
+        *plot_figures_parallelism(df, 'parallelism_cgroup_smallblks_ssd_2', 'SSD + 3GB cgroup + small blocks'),  # SSD (11)
+        # *plot_figures_parallelism(df, 'parallelism_cgroup_sel50_2', '3GB cgroup 50% selectivity', time_ybound=(0, 80)),  # 12
     ]
 
     print(f'Showing plots...')
@@ -580,26 +641,6 @@ def main(df: pd.DataFrame):
 
     return df, plots
 
-
-def add_reads(df: pd.DataFrame) -> pd.DataFrame:
-    # convert hardware stat columns to numeric
-    for c in SYSBLOCKSTAT_COLS:
-        df[c] = pd.to_numeric(df[c])
-    df['hw_read_gb'] = df.sectors_read * 512 / 2**30
-
-    df['hw_mb_per_s'] = df.hw_read_gb * 1024 * 10**9 / df.total_time_ns
-    df['pg_mb_per_s'] = df.data_read_gb * 1024 * 10**9 / df.total_time_ns
-    df['minutes_total'] = df.total_time_ns / 10**9 / 60
-    df['minutes_stream'] = df.max_stream_s / 60
-
-    df['pg_iolat'] = (df.db_blk_read_time / 1000) / (df.db_blks_read * df.block_size / 2**20)  # ms/block to s/GiB
-    df['hw_iolat'] = (df.read_ticks / 1000) / (df.sectors_read * 512 / 2**30)  # ms/sectors to s/GiB
-
-    # disk wait time (minutes) (concurrent waits including separate worker threads are added)
-    df['pg_disk_wait'] = df.db_blk_read_time / 1000 / 60
-    df['hw_disk_wait'] = df.read_ticks / 1000 / 60
-
-    return df
 
 
 if __name__ == '__main__':

@@ -341,6 +341,7 @@ class RuntimePgConfig:
     pbm_evict_num_victims: Optional[int] = None
     pbm_bg_naest_max_age: Optional[float] = None
     max_pred_locks_per_transaction: Optional[int] = None
+    pbm_evict_whole_block_group: Optional[bool] = None
 
     # @property
     # def effective_cache_size(self):
