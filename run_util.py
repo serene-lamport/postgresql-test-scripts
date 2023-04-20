@@ -114,9 +114,26 @@ def main():
     elif args.action == 'testing':
         pass
 
-        with FabConnection('tem114') as conn:
-            x = get_remote_disk_stats(conn, DbConfig(DbBin(BRANCH_POSTGRES_BASE), DbData(TPCH, 2)))
-        print(x)
+        blk_sz = 12
+        sf = 3
+        idx = None
+        cluster = 'dates'
+        host = 'tem112'
+
+        update_last_config(DbConfig(DbBin(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz),
+                                    DbData(workload=TPCH, sf=sf, block_size=blk_sz))
+                               .to_config_key(host),
+                           DbSetup(idx, cluster))
+
+        res = read_last_config(host)
+
+        for k, v in res.items():
+            print(f'{k}:    {v}')
+
+
+        # with FabConnection('tem114') as conn:
+        #     x = get_remote_disk_stats(conn, DbConfig(DbBin(BRANCH_POSTGRES_BASE), DbData(TPCH, 2)))
+        # print(x)
 
     else:
         raise Exception(f'Unknown action {args.action}')

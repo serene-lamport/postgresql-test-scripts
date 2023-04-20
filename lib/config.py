@@ -105,9 +105,6 @@ NON_DIR_RESULTS = [CONFIG_FILE_NAME, CONSTRAINTS_FILE, INDEXES_FILE, IOSTATS_FIL
 # Aggregate results to:
 COLLECTED_RESULTS_CSV = 'results.csv'
 
-# Data to remember between runs. These are NOT absolute paths, they are relative to the git repo.
-LAST_CONFIG_FILE = 'last_config.json'
-
 # Used to determine the 'pages per range' of BRIN indexes. We want to adjust this depending on the block size to have
 # the same number of *rows* per range. (approximately - blocks are padded slightly if not exactly a multiple of the row
 # size) This value is divided by the block size (in kB), so it should be a common multiple of all block sizes.

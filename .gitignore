@@ -1,4 +1,4 @@
-last_config.json
+last_config*.json
 results.csv
 test_sql/
 .fleet/

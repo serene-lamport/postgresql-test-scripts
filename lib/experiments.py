@@ -197,9 +197,13 @@ WORKLOADS_MAP: Dict[str, WorkloadConfig] = {c.workname: c for c in [
 
 @dataclass(frozen=True, eq=True)
 class ConfigKey:
-    """Key in the `last_config.json` file"""
-    sf: int
-    blk_sz: int
+    """Key in the `last_config_*.json` file"""
+    host: str
+    data_path: str
+
+    @property
+    def key_str(self):
+        return f'{self.data_path}'
 
 
 @dataclass(frozen=True)
@@ -276,9 +280,8 @@ class DbConfig:
     def bg_size(self) -> int:
         return self.bin.bg_size
 
-    def to_config_key(self) -> ConfigKey:
-        return ConfigKey(sf=self.data.sf, blk_sz=self.bin.block_size)
-        # TODO update this to include host? (or just make it host:directory...)
+    def to_config_key(self, host: str) -> ConfigKey:
+        return ConfigKey(dir=str(self.data.data_path), host=host)
 
     def to_config_map(self) -> dict:
         return {
@@ -416,14 +419,18 @@ class ExperimentConfig:
         return self.results_dir / f'{self.dbconf.branch.name}_blksz{self.dbconf.block_size}'
 
 
-def read_last_config() -> DefaultDict[ConfigKey, DbSetup]:
+def last_config_file(dbhost: str) -> str:
+    return f'last_config_{dbhost}.json'
+
+
+def read_last_config(dbhost: str) -> DefaultDict[str, DbSetup]:
     """
     Reads the current database index/cluser configuration from `LAST_CONFIG_FILE` and returns it as a dictionary.
-    Keys are `ConfigKey`
+    Keys are strings for the path of the database file on the host
     Values are `DbSetup`
     """
     try:
-        with open(LAST_CONFIG_FILE, 'r') as cf:
+        with open(last_config_file(dbhost), 'r') as cf:
             decoded = json.JSONDecoder().decode(cf.read())
     except FileNotFoundError:
         decoded = []
@@ -434,7 +441,7 @@ def read_last_config() -> DefaultDict[ConfigKey, DbSetup]:
         return [f.name for f in fields(c)]
 
     for d in decoded:
-        d_k = ConfigKey(**{k: v for k, v in d.items() if k in field_names(ConfigKey)})
+        d_k = d['key']
         d_v = DbSetup(**{k: v for k, v in d.items() if k in field_names(DbSetup)})
 
         last_conf[d_k] = d_v
@@ -442,27 +449,23 @@ def read_last_config() -> DefaultDict[ConfigKey, DbSetup]:
     return last_conf
 
 
-def update_last_config(conf: DbConfig, setup: DbSetup):
+def update_last_config(key: ConfigKey, setup: DbSetup):
     """Update the configuration file for the specified config and setup."""
-    last_conf = read_last_config()
+    last_conf = read_last_config(key.host)
 
-    c = ConfigKey(sf=conf.sf, blk_sz=conf.block_size)
-    last_conf[c] = setup
+    last_conf[key.key_str] = setup
 
-    to_encode = [{**asdict(k), **asdict(v)} for k, v in last_conf.items()]
+    to_encode = [{'key': k, **asdict(v)} for k, v in last_conf.items()]
 
-    with open(LAST_CONFIG_FILE, 'w') as f:
+    with open(last_config_file(key.host), 'w') as f:
         encoder = json.JSONEncoder(indent=2)
         f.write(encoder.encode(to_encode))
 
 
-def get_last_config(conf: Union[DbConfig, ConfigKey]) -> DbSetup:
+def get_last_config(key: ConfigKey) -> DbSetup:
     """Get database setup from the config file for the given configuration."""
-    last_conf = read_last_config()
-    if isinstance(conf, DbConfig):
-        return last_conf[conf.to_config_key()]
-    else:
-        return last_conf[conf]
+    last_conf = read_last_config(key.host)
+    return last_conf[key.key_str]
 
 
 class GitProgressBar(git.RemoteProgress):
@@ -1081,7 +1084,7 @@ def setup_indexes_cluster_tpch(blk_sz: int, sf: int, db_host: str, *, prev: DbSe
                 ret = read_constraints_indexes(pgconn)
 
             # remember the changes
-            update_last_config(dbconf, new)
+            update_last_config(dbconf.to_config_key(db_host), new)
 
         finally:
             stop_remote_postgres(fabconn, dbconf)
@@ -1251,7 +1254,7 @@ def drop_all_indexes_tpch(sf: int, blk_sz: int, db_host: str):
                 for t, idx in all_indexes:
                     pgconn.execute(f'DROP INDEX IF EXISTS {idx} CASCADE')
 
-                update_last_config(dbconf, DbSetup(indexes=None, clustering=None))
+                update_last_config(dbconf.to_config_key(db_host), DbSetup(indexes=None, clustering=None))
 
         finally:
             stop_remote_postgres(fabconn, dbconf)
@@ -1264,9 +1267,13 @@ def reindex(args):
     if args.sf is None:
         raise Exception(f'Must specify scale factor of databases to recluster!')
 
+    host = args.host or PG_HOST_TPCH
+    conf = DbConfig(DbBin(branch=BRANCH_POSTGRES_BASE, block_size=args.blk_sz),
+                    DbData(sf=args.sf, block_size=args.blk_sz, workload=TPCH))
+
     # read in what indexes/clustering is currently used in the database
     # last_config = read_last_config()
-    prev_setup = get_last_config(ConfigKey(sf=args.sf, blk_sz=args.blk_sz))
+    prev_setup = get_last_config(conf.to_config_key(host))
 
     # special case: if 'none' is specified we want to forget what the clustering is (and do nothing)
     # in this case set new_cluster to None (handled by setup_indexes_cluster, which updates our state file)
@@ -1280,7 +1287,7 @@ def reindex(args):
     new_setup = DbSetup(indexes=new_indexes, clustering=new_cluster)
 
     print(f'~~~~~~~~~~ Reconfiguring using indexes {new_indexes}, clustering {new_cluster} for blk_sz={args.blk_sz}, sf={args.sf} ~~~~~~~~~~')
-    setup_indexes_cluster_tpch(args.blk_sz, args.sf, db_host=args.host or PG_HOST_TPCH, prev=prev_setup, new=new_setup)
+    setup_indexes_cluster_tpch(args.blk_sz, args.sf, db_host=host, prev=prev_setup, new=new_setup)
 
 
 def run_experiment(experiment: str, exp_config: ExperimentConfig):
@@ -1295,7 +1302,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
 
     # Check current status of indexes & clustering in the database
     if is_tpch:
-        prev_setup: DbSetup = get_last_config(dbconf)
+        prev_setup: DbSetup = get_last_config(dbconf.to_config_key(exp_config.db_host))
         dbsetup = dbsetup.update_with_old(prev_setup)
         dbsetup_dict = asdict(dbsetup)
     else:
