@@ -131,6 +131,7 @@ class WeightedWorkloadConfig(WorkloadConfig):
         ET.SubElement(work_element, 'weights').text = self.weights
         ET.SubElement(work_element, 'time').text = str(self.time_s)
 
+
     def to_config_map(self) -> dict:
         return {
             # general workload config fields
@@ -335,6 +336,8 @@ class RuntimePgConfig:
     shared_buffers: str
     synchronize_seqscans: str = 'on'
     track_io_timing: str = 'off'
+    work_mem: str = PG_WORK_MEM
+    max_connections: int = None
     # PBM-only fields:
     # pbm2 and later:
     pbm_evict_num_samples: Optional[int] = None
@@ -684,7 +687,7 @@ def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: Ru
     cf.update({
         'listen_addresses': '*',
         'port': PG_PORT,
-        'work_mem': PG_WORK_MEM,
+        # 'work_mem': PG_WORK_MEM,
         **pgconf.config_dict(),
     })
 
@@ -762,6 +765,11 @@ def create_bbase_config(sf: int, bb_config: BBaseConfig, out, host):
     selectivity = bb_config.workload.selectivity
     if selectivity is not None:
         ET.SubElement(params, 'selectivity').text = str(selectivity)
+
+    # "new connection per transaction"?
+    for ncpt in params.findall('newConnectionPerTxn'):
+        params.remove(ncpt)
+    # ET.SubElement(params, 'newConnectionPerTxn').text = str(False).lower()
 
     # Specify the workload
     works = params.find('works')
@@ -1297,7 +1305,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     with open(exp_config.results_dir / CONFIG_FILE_NAME, 'w') as f:
         config = {
             'experiment': experiment,
-            'work_mem': PG_WORK_MEM,
+            # 'work_mem': PG_WORK_MEM,
             **dbconf.to_config_map(),
             **asdict(pgconf),
             **bbconf.to_config_map(),

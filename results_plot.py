@@ -146,6 +146,7 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
             plotfn(df_plot[x], df_plot[y], label=grp_name(grp))
 
     ax.minorticks_off()
+    ax.ticklabel_format(useOffset=False)
     if ybound is not None:
         ax.set_ybound(*ybound)
     if xlabels is not None:
@@ -470,32 +471,25 @@ def plot_figures_9(df: pd.DataFrame):
     return ret_list
 
 
-def plot_figures_10_tpcc(df: pd.DataFrame):
+def plot_figures_tpcc(df: pd.DataFrame, exp: str, subtitle: str):
     # tpcc_basic_parallelism, tpcc_basic_parallelism_largeblks_2
-    group_cols = ['branch', 'pbm_evict_num_samples']
+    group_cols = ['branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims']
     tpcc_plot_args = {
         'group': group_cols, 'grp_name': format_branch_ns_nv,
         'x': 'parallelism', 'xsort': True, 'xlabel': 'Parallelism', 'xlabels': 'parallelism',
-        'avg_y_values': True,
+        'avg_y_values': True, 'legend_title': 'Policy',
     }
-    plots_hit_rate = lambda: [
-        plot_exp(df, 'tpcc_basic_parallelism', y='hit_rate', ylabel='Hit rate',
-                 title=f'TPCC Hit rate vs parallelism - small block groups', **tpcc_plot_args),
-        plot_exp(df, 'tpcc_basic_parallelism_largeblks_2', y='hit_rate', ylabel='Hit rate',
-                 title=f'TPCC Hit rate vs parallelism - large block groups', **tpcc_plot_args),
-    ]
-
-    plots_throughput = lambda: [
-        plot_exp(df, 'tpcc_basic_parallelism', y='throughput', ylabel='Throughput',
-                 title=f'TPCC Throughput vs parallelism - small block groups', **tpcc_plot_args),
-        plot_exp(df, 'tpcc_basic_parallelism_largeblks_2', y='throughput', ylabel='Throughput',
-                 title=f'TPCC Throughput vs parallelism - large block groups', **tpcc_plot_args),
-
-    ]
 
     res_plots = [
-        *plots_hit_rate(),
-        *plots_throughput(),
+        # hit rate
+        plot_exp(df, exp, y='hit_rate', ylabel='Hit rate',
+                 title=f'TPCC Hit rate vs parallelism - {subtitle}', **tpcc_plot_args),
+        # throughput
+        plot_exp(df, exp, y='throughput', ylabel='Throughput',
+                 title=f'TPCC Throughput vs parallelism - {subtitle}', **tpcc_plot_args),
+        # average latency
+        plot_exp(df, exp, y='avg_latency_ms', ylabel='Average Latency (ms)',
+                 title=f'TPCC Latency vs parallelism - {subtitle}', **tpcc_plot_args),
     ]
     return res_plots
 
@@ -515,9 +509,14 @@ def main(df: pd.DataFrame):
         # *plot_figures_9(df),
         # *plot_figures_10_tpcc(df),
         # *plot_figures_11_ssd(df),
-        *plot_figures_parallelism(df, 'parallelism_cgroup_largeblks_ssd_2', 'SSD + 3GB cgroup'),  # SSD (11)
-        *plot_figures_parallelism(df, 'parallelism_cgroup_smallblks_ssd_2', 'SSD + 3GB cgroup + small blocks'),  # SSD (11)
+        # *plot_figures_parallelism(df, 'parallelism_cgroup_largeblks_ssd_2', 'SSD + 3GB cgroup'),  # SSD (11)
+        # *plot_figures_parallelism(df, 'parallelism_cgroup_smallblks_ssd_2', 'SSD + 3GB cgroup + small blocks'),  # SSD (11)
         # *plot_figures_parallelism(df, 'parallelism_cgroup_sel50_2', '3GB cgroup 50% selectivity', time_ybound=(0, 80)),  # 12
+        *plot_figures_tpcc(df, 'tpcc_basic_parallelism_3', 'HDD small block groups'),
+        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_largeblks_3', 'HDD large block groups'), (empty DF)
+        # one of the above failed at some point?
+        *plot_figures_tpcc(df, 'tpcc_basic_parallelism_ssd_3', 'SSD small block groups'),
+        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_largeblks_ssd_3', 'SSD large block groups'),  # failed on second experiment (OOM?) (1 item in DF)
     ]
 
     print(f'Showing plots...')
@@ -540,6 +539,7 @@ if __name__ == '__main__':
     df['data_processed_per_stream'] = df.data_processed_gb / df.parallelism
     df['data_read_per_s'] = df.data_read_gb / df.max_stream_s
     df['data_processed_per_s'] = df.data_processed_gb / df.max_stream_s
+    df['avg_latency_s'] = df.avg_latency_ms / 1000
     df = add_reads(df)
 
     df, plots = main(df)

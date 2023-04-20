@@ -166,11 +166,22 @@ def test_micro_parallelism_constant_nqueries() -> Iterable[ExperimentConfig]:
 
 
 def test_tpcc(seeds: List[int], nsamples: List[int] = None, shmem='2560MB', cgmem=3.0,
-              blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE) -> Iterable[ExperimentConfig]:
-    dbdata = DbData(WORKLOAD_TPCC.workload, sf=100, block_size=blk_sz)
+              blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE, use_ssd=False) -> Iterable[ExperimentConfig]:
+    ssd_data_root = pathlib.Path('/hdd2/pgdata')
+    ssd_dev_stats = 'sda/sda3'
+    ssd_host = 'tem06'
+
+    workload = WORKLOAD_TPCC.workload
+    data_root = PG_DEFAULT_DATA_ROOT
+    if use_ssd:
+        workload = workload.with_host_device(ssd_host, ssd_dev_stats)
+        data_root = ssd_data_root
+
+    dbdata = DbData(workload, sf=100, block_size=blk_sz, data_root=data_root)
     cgroup = CGroupConfig(cgmem)
 
-    parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
+    # parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
+    parallel_ops = [300, 200, 100]
     branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3]
 
     nsamples = nsamples or [1, 10]
@@ -179,8 +190,11 @@ def test_tpcc(seeds: List[int], nsamples: List[int] = None, shmem='2560MB', cgme
         dbbin = DbBin(branch, block_size=blk_sz, bg_size=bg_sz)
         dbconf = DbConfig(dbbin, dbdata)
 
+        bbworkload = WORKLOAD_TPCC.with_times(300, 30).with_rate(100)
+        bbworkload.workload = workload
         bbconf = BBaseConfig(nworkers=nworkers, seed=seed,
-                             workload=WORKLOAD_TPCC.with_times(300, 30))
+                             workload=bbworkload)
+        # TODO or with rate = nworkers? i.e. each worker tries once a second... (maybe have to be less than that)
 
         for ns in branch_samples(branch, nsamples):
             pgconf = RuntimePgConfig(
@@ -188,12 +202,14 @@ def test_tpcc(seeds: List[int], nsamples: List[int] = None, shmem='2560MB', cgme
                 synchronize_seqscans='on',
                 track_io_timing='on',
                 pbm_evict_num_samples=ns,
+                work_mem='8MB',
+                max_connections=nworkers + 5,
                 # pbm_evict_num_victims='',
                 pbm_bg_naest_max_age=10 if branch.accepts_nsamples else None,
                 max_pred_locks_per_transaction=128,  # not sure if needed?
             )
 
-            yield ExperimentConfig(pgconf, dbconf, None, bbconf, cgroup=cgroup)
+            yield ExperimentConfig(pgconf, dbconf, None, bbconf, cgroup=cgroup, db_host=ssd_host if use_ssd else None)
 
 
 def test_micro_parallelism(seeds: List[Optional[int]], selectivity: Optional[float], *,
@@ -433,36 +449,34 @@ def main_tpch():
 def ssd_tests():
     data_root = pathlib.Path('/hdd2/pgdata')
     dev_stats = 'sda/sda3'
+    ssd_args = {'data_root': (data_root, dev_stats), 'db_host': 'tem06'}
+    common_args = {'selectivity': 0.3, 'cm': 4, 'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'cache_time': 10, 'shmem': '2560MB', 'cgmem_gb': 3.0}
     run_tests('parallelism_cgroup_largeblks_ssd_2',
-              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
-                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
-                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],
-                                     data_root=(data_root, dev_stats), db_host='tem06'))
+              test_micro_parallelism(rand_seeds[3:3], **common_args, **ssd_args,
+                                     nsamples=[1, 10],   branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], blk_sz=32, bg_sz=4096, ))
 
     # repeat with 10 "victims" bulk evictions
     run_tests('parallelism_cgroup_largeblks_ssd_2',
-              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
-                                     nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0, blk_sz=32, bg_sz=4096,
-                                     branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10,
-                                     data_root=(data_root, dev_stats), db_host='tem06'))
+              test_micro_parallelism(rand_seeds[3:3], **common_args, **ssd_args,
+                                     nsamples=[10],   branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10, blk_sz=32, bg_sz=4096, ))
 
     # repeat with small blocks
     run_tests('parallelism_cgroup_smallblks_ssd_2',
-              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
-                                     nsamples=[1, 10], cache_time=10, shmem='2560MB', cgmem_gb=3.0,
-                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],
-                                     data_root=(data_root, dev_stats), db_host='tem06'))
+              test_micro_parallelism(rand_seeds[3:3], **common_args, **ssd_args,
+                                     nsamples=[1, 10], branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
     run_tests('parallelism_cgroup_smallblks_ssd_2',
-              test_micro_parallelism(rand_seeds[3:3], selectivity=0.3, cm=4, parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24, 32],
-                                     nsamples=[10], cache_time=10, shmem='2560MB', cgmem_gb=3.0,
-                                     branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10,
-                                     data_root=(data_root, dev_stats), db_host='tem06'))
+              test_micro_parallelism(rand_seeds[3:3], **common_args, **ssd_args,
+                                     nsamples=[10], branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10, ))
 
 
-def main_tpcc():
-    ...
-    # run_tests('tpcc_basic_parallelism', test_tpcc(rand_seeds[:6],))
-    # run_tests('tpcc_basic_parallelism_largeblks_2', test_tpcc(rand_seeds[:6], blk_sz=32, bg_sz=4096))
+def main_tpcc_hdd():
+    run_tests('tpcc_basic_parallelism_3', test_tpcc(rand_seeds[:6], use_ssd=False))
+    run_tests('tpcc_basic_parallelism_largeblks_3', test_tpcc(rand_seeds[:6], use_ssd=False, blk_sz=32, bg_sz=4096))
+
+
+def main_tpcc_ssd():
+    run_tests('tpcc_basic_parallelism_ssd_3', test_tpcc(rand_seeds[:6], use_ssd=True, cgmem=4.0))
+    run_tests('tpcc_basic_parallelism_largeblks_ssd_3', test_tpcc(rand_seeds[:6], use_ssd=True, cgmem=4.0, blk_sz=32, bg_sz=4096))
 
 
 
@@ -477,10 +491,12 @@ if __name__ == '__main__':
 
     if workload_type == 'tpch':
         main_tpch()
-    elif workload_type == 'tpcc':
-        main_tpcc()
+    elif workload_type == 'tpcc_hdd':
+        main_tpcc_hdd()
     elif workload_type == 'tpch_ssd':
         ssd_tests()
+    elif workload_type == 'tpcc_ssd':
+        main_tpcc_ssd()
 
     else:
         print(f'unknown workload type "{workload_type}"!')
