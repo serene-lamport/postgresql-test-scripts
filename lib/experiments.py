@@ -45,9 +45,9 @@ BBASE_WARMUP_TIME = 10
 
 # Allowed sizes of block groups (in KiB). Database is compiled for each of these sizes.
 # Must be a power of 2 and multiple of block size
-# BLOCK_GROUP_SIZES = [256, 1024, 4096]
+BLOCK_GROUP_SIZES = [256, 1024, 4096]
 # BLOCK_GROUP_SIZES = [256]
-BLOCK_GROUP_SIZES = [256, 4096]
+# BLOCK_GROUP_SIZES = [256, 4096]
 
 PG_WORK_MEM = '32MB'
 
@@ -179,10 +179,11 @@ TPCH = Workload('tpch', 'bbase_config/sample_tpch_config.xml', PG_HOST_TPCH, PG_
 TPCC = Workload('tpcc', 'bbase_config/sample_tpcc_config.xml', PG_HOST_TPCC, PG_DATA_DEVICE)
 
 
-WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0', time_s=BBASE_TIME)
-WORKLOAD_MICRO_WEIGHTS = WeightedWorkloadConfig('micro_w', TPCH, weights='0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1', time_s=BBASE_TIME)
-WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c', TPCH, counts=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0])
-WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', TPCH, counts=[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1])
+WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0,0', time_s=BBASE_TIME)
+WORKLOAD_MICRO_WEIGHTS = WeightedWorkloadConfig('micro_w', TPCH, weights='0,'*22 + '1,1,0', time_s=BBASE_TIME)
+WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c', TPCH, counts=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0])
+WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', TPCH, counts=[0]*22 + [1, 1, 0])
+WORKLOAD_MICRO_IDX_COUNTS = CountedWorkloadConfig('microidx_c', TPCH, counts=[0]*22 + [0, 0, 1])
 WORKLOAD_TPCC = WeightedWorkloadConfig('tpcc', TPCC, weights='45,43,4,4,4', time_s=BBASE_TIME, warmup_s=BBASE_WARMUP_TIME)
 
 
@@ -281,7 +282,7 @@ class DbConfig:
         return self.bin.bg_size
 
     def to_config_key(self, host: str) -> ConfigKey:
-        return ConfigKey(dir=str(self.data.data_path), host=host)
+        return ConfigKey(data_path=str(self.data.data_path), host=host)
 
     def to_config_map(self) -> dict:
         return {
@@ -341,6 +342,12 @@ class RuntimePgConfig:
     track_io_timing: str = 'off'
     work_mem: str = PG_WORK_MEM
     max_connections: int = None
+    # Optimizer cost estimation
+    seq_page_cost: Optional[float] = None
+    random_page_cost: Optional[float] = None
+    # Turn on/off various features to force desired access methods
+    enable_bitmapscan: Optional[bool] = None
+    enable_seqscan: Optional[bool] = None
     # PBM-only fields:
     # pbm2 and later:
     pbm_evict_num_samples: Optional[int] = None
@@ -348,6 +355,11 @@ class RuntimePgConfig:
     pbm_bg_naest_max_age: Optional[float] = None
     max_pred_locks_per_transaction: Optional[int] = None
     pbm_evict_whole_block_group: Optional[bool] = None
+    # pbm3 and later:
+    pbm_evict_use_freq: Optional[bool] = None
+    # pbm4 and later:
+    pbm_evict_use_idx_scan: Optional[bool] = None
+    pbm_idx_scan_num_counts: Optional[int] = None
 
     # @property
     # def effective_cache_size(self):
@@ -1064,21 +1076,17 @@ def read_constraints_indexes(pgconn: PgConnection):
     return constraints, indexes
 
 
-def setup_indexes_cluster_tpch(blk_sz: int, sf: int, db_host: str, *, prev: DbSetup, new: DbSetup, dbconf: DbConfig = None):
+def setup_indexes_cluster_tpch(dbconf: DbConfig, db_host: str, *, prev: DbSetup, new: DbSetup):
     """Change indexes and clustering on the database. Remembers the changes in `last_config.json`"""
 
     with FabConnection(db_host) as fabconn:
-        if dbconf is None:
-            dbbin = DbBin(branch=BRANCH_POSTGRES_BASE, block_size=blk_sz)
-            dbdata = DbData(workload=TPCH, sf=sf, block_size=blk_sz)
-            dbconf = DbConfig(bin=dbbin, data=dbdata)
         # Use large amount of memory for creating indexes
         config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'), db_host)
         start_remote_postgres(fabconn, dbconf)
 
         try:
-            with pg.open(f'pq://{db_host}/TPCH_{sf}') as pgconn:
-                reconfigure_indexes(pgconn, blk_sz, prev_indexes=prev.indexes, new_indexes=new.indexes)
+            with pg.open(f'pq://{db_host}/TPCH_{dbconf.sf}') as pgconn:
+                reconfigure_indexes(pgconn, dbconf.block_size, prev_indexes=prev.indexes, new_indexes=new.indexes)
                 reconfigure_clustering(pgconn, prev_cluster=prev.clustering, new_cluster=new.clustering or prev.clustering)
 
                 ret = read_constraints_indexes(pgconn)
@@ -1268,11 +1276,11 @@ def reindex(args):
         raise Exception(f'Must specify scale factor of databases to recluster!')
 
     host = args.host or PG_HOST_TPCH
+    data_root = Path(args.data_root) or PG_DEFAULT_DATA_ROOT
     conf = DbConfig(DbBin(branch=BRANCH_POSTGRES_BASE, block_size=args.blk_sz),
-                    DbData(sf=args.sf, block_size=args.blk_sz, workload=TPCH))
+                    DbData(sf=args.sf, block_size=args.blk_sz, workload=TPCH, data_root=data_root))
 
     # read in what indexes/clustering is currently used in the database
-    # last_config = read_last_config()
     prev_setup = get_last_config(conf.to_config_key(host))
 
     # special case: if 'none' is specified we want to forget what the clustering is (and do nothing)
@@ -1287,7 +1295,7 @@ def reindex(args):
     new_setup = DbSetup(indexes=new_indexes, clustering=new_cluster)
 
     print(f'~~~~~~~~~~ Reconfiguring using indexes {new_indexes}, clustering {new_cluster} for blk_sz={args.blk_sz}, sf={args.sf} ~~~~~~~~~~')
-    setup_indexes_cluster_tpch(args.blk_sz, args.sf, db_host=host, prev=prev_setup, new=new_setup)
+    setup_indexes_cluster_tpch(dbconf=conf, db_host=host, prev=prev_setup, new=new_setup)
 
 
 def run_experiment(experiment: str, exp_config: ExperimentConfig):
@@ -1353,7 +1361,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     if is_tpch:
         # Make sure we have the desired indexes & clustering if applicable
         print(f'~~~~~~~~~~ Setup indexes={dbsetup.indexes}, clustering={dbsetup.clustering} for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
-        constraints, indexes = setup_indexes_cluster_tpch(blk_sz, sf, exp_config.db_host, dbconf=exp_config.dbconf,
+        constraints, indexes = setup_indexes_cluster_tpch(dbconf=exp_config.dbconf, db_host=exp_config.db_host,
                                                           prev=prev_setup, new=dbsetup)
 
         # remember when indexes and constraints are defined in case we want to double check later...

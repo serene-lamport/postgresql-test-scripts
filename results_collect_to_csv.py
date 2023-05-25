@@ -36,7 +36,9 @@ csv_cols = [
     'experiment', 'dir', 'branch', 'block size',
     # configuration from configuration json file
     'block_group_size', 'workload', 'scalefactor', 'selectivity', 'clustering', 'indexes', 'shared_buffers',
-    'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'pbm_evict_num_victims', 'parallelism', 'time',
+    'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'pbm_evict_num_victims',
+    'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_idx_scan_num_counts',
+    'parallelism', 'time',
     'count_multiplier', 'prewarm', 'seed',
     # from OS IO statis
     *SYSBLOCKSTAT_COLS,

@@ -51,6 +51,10 @@ class PgBranch:
     def accepts_nsamples(self) -> bool:
         return self.gen > 1
 
+    @property
+    def idx_support(self) -> bool:
+        return self.gen > 2
+
 
 # Postgres git info: repository and branch names
 POSTGRES_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/postgresql-masters-work.git'
@@ -60,6 +64,7 @@ BRANCH_POSTGRES_BASE = PgBranch(0, 'base', 'REL_14_STABLE')
 BRANCH_PBM1 = PgBranch(1, 'pbm1', 'pbm_part1')  # described in paper
 BRANCH_PBM2 = PgBranch(2, 'pbm2', 'pbm_part2')  # using sampling-based eviction
 BRANCH_PBM3 = PgBranch(2, 'pbm3', 'pbm_part3')  # some support for non-registered buffers
+BRANCH_PBM4 = PgBranch(3, 'pbm4', 'pbm_part4')  # support for index scans
 # temporary branches for comparing minor changes:
 BRANCH_PBM_OLD = PgBranch(1, 'pbm_old', 'pbm_old')
 BRANCH_PBM_COMPARE1 = PgBranch(2, 'pbm_comp1', 'pbm_comp1')
@@ -70,6 +75,7 @@ POSTGRES_ALL_BRANCHES: typing.List[PgBranch] = [
     BRANCH_PBM1,
     BRANCH_PBM2,
     BRANCH_PBM3,
+    BRANCH_PBM4,
 
     # TEMP: for comparing changes in my own code
     # BRANCH_PBM_OLD,

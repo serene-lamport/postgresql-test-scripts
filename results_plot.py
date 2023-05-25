@@ -512,10 +512,10 @@ def main(df: pd.DataFrame):
         # *plot_figures_parallelism(df, 'parallelism_cgroup_largeblks_ssd_2', 'SSD + 3GB cgroup'),  # SSD (11)
         # *plot_figures_parallelism(df, 'parallelism_cgroup_smallblks_ssd_2', 'SSD + 3GB cgroup + small blocks'),  # SSD (11)
         # *plot_figures_parallelism(df, 'parallelism_cgroup_sel50_2', '3GB cgroup 50% selectivity', time_ybound=(0, 80)),  # 12
-        *plot_figures_tpcc(df, 'tpcc_basic_parallelism_3', 'HDD small block groups'),
+        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_3', 'HDD small block groups'),
         # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_largeblks_3', 'HDD large block groups'), (empty DF)
         # one of the above failed at some point?
-        *plot_figures_tpcc(df, 'tpcc_basic_parallelism_ssd_3', 'SSD small block groups'),
+        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_ssd_3', 'SSD small block groups'),
         # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_largeblks_ssd_3', 'SSD large block groups'),  # failed on second experiment (OOM?) (1 item in DF)
     ]
 
@@ -563,6 +563,8 @@ if __name__ == '__main__':
         # 'data_read_gb',
         # postgres DB stats
         'db_active_time', 'db_blk_read_time', 'db_blks_hit', 'db_blks_read',
+        # index vs heap blks:
+        'heap_blks_hit', 'heap_blks_read', 'idx_blks_hit', 'idx_blks_read',
         # other HW io stats
         *SYSBLOCKSTAT_COLS,
         # calculated:
