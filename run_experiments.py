@@ -218,7 +218,8 @@ def test_micro_base(work: CountedWorkloadConfig, seeds: List[Optional[int]], sel
                     cm=8, parallel_ops: List[int] = None, nsamples: List[int] = None, nvictims: int = 1,
                     cache_time: Optional[float] = None, branches: List[PgBranch] = None,
                     shmem='2GB', cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
-                    data_root: (Path, str) = None, db_host: str = None, extra_pg_args: dict = None) \
+                    data_root: (Path, str) = None, db_host: str = None, extra_pg_args: dict = None,
+                    indexes='lineitem_brinonly', clustering='dates') \
         -> Iterable[ExperimentConfig]:
     workload = work.workload
     if data_root is not None:
@@ -227,7 +228,7 @@ def test_micro_base(work: CountedWorkloadConfig, seeds: List[Optional[int]], sel
         # print(f'DbData: {dbdata}')
     else:
         dbdata = DbData(workload, sf=10, block_size=blk_sz)
-    dbsetup = DbSetup(indexes='lineitem_brinonly', clustering='dates')
+    dbsetup = DbSetup(indexes=indexes, clustering=clustering)
 
     cgroup = CGroupConfig(cgmem_gb) if cgmem_gb is not None else None
     if parallel_ops is None:
@@ -282,8 +283,14 @@ def test_micro_index_parallelism(seeds: List[Optional[int]], selectivity: float,
                                  shmem='2GB', cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
                                  data_root: (Path, str) = None, db_host: str = None, extra_pg_args: dict = None) \
         -> Iterable[ExperimentConfig]:
+    """
+    micro experiments with index scans
 
-    sel = selectivity + 100 * pct_of_range
+    selectivity: fraction of the table to select in a single scan, from 0 to 1
+    pct_of_range: percentage (0-100) of the key-range of the table from which to choose the query bounds
+    """
+
+    sel = selectivity + pct_of_range
     pg_idx_args = {
         'seq_page_cost': 1,
         'random_page_cost': 1.2,
@@ -296,7 +303,8 @@ def test_micro_index_parallelism(seeds: List[Optional[int]], selectivity: float,
                            cm=cm, parallel_ops=parallel_ops, nsamples=nsamples, nvictims=nvictims,
                            cache_time=cache_time, branches=branches,
                            shmem=shmem, cgmem_gb=cgmem_gb, blk_sz=blk_sz, bg_sz=bg_sz,
-                           data_root=data_root, db_host=db_host, extra_pg_args=pg_idx_args)
+                           data_root=data_root, db_host=db_host, extra_pg_args=pg_idx_args,
+                           indexes='btree')
 
 
 
@@ -491,9 +499,9 @@ def ssd_tests():
     data_root = pathlib.Path('/hdd2/pgdata')
     dev_stats = 'sda/sda3'
     ssd_args = {'data_root': (data_root, dev_stats), 'db_host': 'tem06'}
-    common_args = {'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'cache_time': 10, 'shmem': '2560MB', 'cgmem_gb': 3.0}
+    common_args = {'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'cache_time': 10, 'cgmem_gb': 3.0}
 
-    common_seq_args = {'selectivity': 0.3, 'cm': 4, **common_args}
+    common_seq_args = {'selectivity': 0.3, 'cm': 4, 'shmem': '2560MB', **common_args}
     # run_tests('parallelism_cgroup_largeblks_ssd_2',
     #           test_micro_parallelism(rand_seeds[3:3], **common_args, **ssd_args,
     #                                  nsamples=[1, 10],   branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], blk_sz=32, bg_sz=4096, ))
@@ -511,21 +519,40 @@ def ssd_tests():
     #           test_micro_parallelism(rand_seeds[3:3], **common_args, **ssd_args,
     #                                  nsamples=[10], branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10, ))
 
-    common_idx_args = {'selectivity': 0.1, 'pct_of_range': 40, 'cm': 8, **common_args}
+
+    common_idx_args = {'selectivity': 0.01, 'pct_of_range': 5, 'cm': 6, 'shmem': '2560MB', **common_args}
+    # PBM4 NOT using frequency-based stats
+    run_tests('parallelism_idx_ssd_pbm4_1',
+              test_micro_index_parallelism(rand_seeds[5:5], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
+                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 0}),
+              skip=0, dry_run=False)
+    # PBM4 WITH inverse-frequency-based stats (in case it makes any difference... probably not for this workload)
+    run_tests('parallelism_idx_ssd_pbm4_1',
+              test_micro_index_parallelism(rand_seeds[5:5], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
+                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 2**14}),
+              skip=0, dry_run=False)
+
     # for non-PBM4 as reference
-    run_tests('parallelism_idx_ssd_2',
-              test_micro_index_parallelism(rand_seeds[3:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[1, 10],
+    run_tests('parallelism_idx_ssd_5',
+              test_micro_index_parallelism(rand_seeds[5:5], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[1, 10],
                                            branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],),
               skip=0, dry_run=False)
 
-    # PBM4 NOT using frequency-based stats
-    run_tests('parallelism_idx_ssd_pbm4_1',
-              test_micro_index_parallelism(rand_seeds[0:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
-                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False}),
-              skip=0, dry_run=False)
-    # TODO consider comparing PBM4 with and without the extra counts
-    # TODO also try pbm_evict_use_freq enabled? (technically was enabled for _1 set of tests)
 
+    # same experiments but tweak selectivity
+    common_idx_args = {'selectivity': 0.02, 'pct_of_range': 5, 'cm': 5, 'shmem': '2560MB', **common_args}
+        # PBM4 NOT using frequency-based stats
+    run_tests('parallelism_idx_ssd_pbm4_s2_r5_1',
+              test_micro_index_parallelism(rand_seeds[0:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
+                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 0}),)
+    # PBM4 WITH inverse-frequency-based stats (in case it makes any difference... probably not for this workload)
+    run_tests('parallelism_idx_ssd_pbm4_s2_r5_1',
+              test_micro_index_parallelism(rand_seeds[0:0], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
+                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 2**14}),)
+    # for non-PBM4 as reference
+    run_tests('parallelism_idx_ssd__s2_r5_1',
+              test_micro_index_parallelism(rand_seeds[0:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[1, 10],
+                                           branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],),)
 
 
 def main_tpcc_hdd():
