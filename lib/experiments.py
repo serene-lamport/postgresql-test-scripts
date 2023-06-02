@@ -49,11 +49,14 @@ BLOCK_GROUP_SIZES = [256, 1024, 4096]
 # BLOCK_GROUP_SIZES = [256]
 # BLOCK_GROUP_SIZES = [256, 4096]
 
-PG_WORK_MEM = '32MB'
+# PG_WORK_MEM = '32MB'
+PG_WORK_MEM = '4MB'
+# TODO maybe make this smaller? with 32 workers, 32MB each is 1GB... Default is 4MB! (why did I increase it to begin with?)
 
 # Defaults for parameters with multiple options
-DEFAULT_BLOCK_SIZE = 8
-DEFAULT_BG_SIZE = 256
+DEFAULT_BLOCK_SIZE = 8  # kB, must be power of 2 between 1 and 32
+# DEFAULT_BG_SIZE = 256
+DEFAULT_BG_SIZE = 1024  # kB, must be power of 2 and >= block size
 
 
 ##########
@@ -178,10 +181,10 @@ class CountedWorkloadConfig(WorkloadConfig):
 TPCH = Workload('tpch', 'bbase_config/sample_tpch_config.xml', PG_HOST_TPCH, PG_DATA_DEVICE)
 TPCC = Workload('tpcc', 'bbase_config/sample_tpcc_config.xml', PG_HOST_TPCC, PG_DATA_DEVICE)
 
-
-WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,0,0', time_s=BBASE_TIME)
+# queries 17 and 20 are extremely slow, 18 and 21 are moderately slow.
+WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,'*16 + '0,'*6 + '0,0,0', time_s=BBASE_TIME)
 WORKLOAD_MICRO_WEIGHTS = WeightedWorkloadConfig('micro_w', TPCH, weights='0,'*22 + '1,1,0', time_s=BBASE_TIME)
-WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c', TPCH, counts=[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 0, 1, 1, 0, 0, 0])
+WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c', TPCH, counts=[1]*16 + [0]*6 + [0, 0, 0])
 WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', TPCH, counts=[0]*22 + [1, 1, 0])
 WORKLOAD_MICRO_IDX_COUNTS = CountedWorkloadConfig('microidx_c', TPCH, counts=[0]*22 + [0, 0, 1])
 WORKLOAD_TPCC = WeightedWorkloadConfig('tpcc', TPCC, weights='45,43,4,4,4', time_s=BBASE_TIME, warmup_s=BBASE_WARMUP_TIME)
@@ -617,7 +620,7 @@ def build_postgres(dbbin: DbBin):
         raise Exception(f'Got return code {ret} when installing postgres {brnch.name} with block size={blk_sz}, group size={bg_sz}')
 
     # compile desired extensions...
-    for ext in ['pg_prewarm']:
+    for ext in ['pg_prewarm', 'pg_trgm']:
         build_postgres_extension(build_path, ext)
 
 
@@ -998,7 +1001,9 @@ def create_indexes(conn: PgConnection, index_dir: str, blk_sz: int):
         return
     with open(f'ddl/index/{index_dir}/create.sql', 'r') as f:
         lines = f.readlines()
-    stmts = ''.join(lines).replace('REPLACEME_BRIN_PAGES_PER_RANGE', str(BASE_PAGES_PER_RANGE / blk_sz))
+    stmts = ''.join(lines)\
+        .replace('REPLACEME_BRIN_PAGES_PER_RANGE', str(BRIN_BASE_PAGES_PER_RANGE / blk_sz))\
+        .replace('REPLACEME_BLOOM_PAGES_PER_RANGE', str(BLOOM_BASE_PAGES_PER_RANGE / blk_sz))
     conn.execute(stmts)
 
 

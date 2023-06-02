@@ -99,6 +99,11 @@
 
 
 
+---------------------------------------
+-- TODO remove B-Tree indexes where a BRIN index serves the same purpose
+-- maybe keep primary keys as BTree and remove foreign keys? (PK sometimes correlated with order...)
+---------------------------------------
+
 -- REGION indices (5)
 CREATE UNIQUE INDEX r_rk ON region (r_regionkey ASC);
 ALTER TABLE region ADD PRIMARY KEY USING INDEX r_rk;
@@ -107,68 +112,105 @@ ALTER TABLE region ADD PRIMARY KEY USING INDEX r_rk;
 CREATE UNIQUE INDEX n_nk ON nation (n_nationkey ASC);
 ALTER TABLE nation ADD PRIMARY KEY USING INDEX n_nk;
 CREATE INDEX n_rk ON nation (n_regionkey ASC);
-ALTER TABLE nation ADD FOREIGN KEY (n_regionkey) REFERENCES region (r_regionkey) ON DELETE CASCADE;
 
 
 -- PART indices (SF * 200,000)
 CREATE UNIQUE INDEX p_pk ON part (p_partkey ASC);
 ALTER TABLE part ADD PRIMARY KEY USING INDEX p_pk;
 
+CREATE INDEX p_bloom_pk on part USING BRIN (p_partkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX p_bloom_size on part USING BRIN (p_size int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX p_bloom_container on part USING BRIN (p_container bpchar_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX p_bloom_brand on part USING BRIN (p_brand bpchar_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+
+CREATE INDEX p_gin_name ON part USING GIN(p_name gin_trgm_ops);
+CREATE INDEX p_gin_type ON part USING GIN(p_type gin_trgm_ops);
+-- CREATE INDEX p_gin_brand ON part USING GIN(p_brand gin_trgm_ops);
+
 -- SUPPLIER indices and constraints (SF * 10,000)
 CREATE UNIQUE INDEX s_sk ON supplier (s_suppkey ASC);
 ALTER TABLE supplier ADD PRIMARY KEY USING INDEX s_sk;
 
-CREATE INDEX s_nk ON supplier (s_nationkey ASC);
-ALTER TABLE supplier ADD FOREIGN KEY (s_nationkey) REFERENCES nation (n_nationkey) ON DELETE CASCADE;
+-- CREATE INDEX s_nk ON supplier (s_nationkey ASC);  -- replaced by bloom!
+-- ALTER TABLE supplier ADD FOREIGN KEY (s_nationkey) REFERENCES nation (n_nationkey) ON DELETE CASCADE;
+
+CREATE INDEX s_bloom_sk on supplier USING BRIN (s_suppkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX s_bloom_nk on supplier USING BRIN (s_nationkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+
+CREATE INDEX s_gin_comment ON supplier USING GIN(s_comment gin_trgm_ops);
+
 
 -- PARTSUPP indices and constraints (SF * 800,000)
-CREATE INDEX ps_pk ON partsupp (ps_partkey ASC);
+-- ordered by partkey
+CREATE INDEX ps_pk ON partsupp (ps_partkey ASC); -- this index highly correlated with physical order
 CREATE INDEX ps_sk ON partsupp (ps_suppkey ASC);
 CREATE UNIQUE INDEX ps_pk_sk ON partsupp (ps_partkey ASC, ps_suppkey ASC);
-ALTER TABLE partsupp ADD PRIMARY KEY USING INDEX ps_pk_sk;
+-- ALTER TABLE partsupp ADD PRIMARY KEY USING INDEX ps_pk_sk;
 CREATE UNIQUE INDEX ps_sk_pk ON partsupp (ps_suppkey ASC, ps_partkey ASC);
 
-ALTER TABLE partsupp ADD FOREIGN KEY (ps_partkey) REFERENCES part (p_partkey) ON DELETE CASCADE;
-ALTER TABLE partsupp ADD FOREIGN KEY (ps_suppkey) REFERENCES supplier (s_suppkey) ON DELETE CASCADE;
+-- ALTER TABLE partsupp ADD FOREIGN KEY (ps_partkey) REFERENCES part (p_partkey) ON DELETE CASCADE;
+-- ALTER TABLE partsupp ADD FOREIGN KEY (ps_suppkey) REFERENCES supplier (s_suppkey) ON DELETE CASCADE;
+
+
+CREATE INDEX ps_bloom_sc on partsupp USING BRIN (ps_supplycost numeric_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX ps_bloom_pk on partsupp USING BRIN (ps_partkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE); -- TODO keep minmax or bloom?
+CREATE INDEX ps_brin_pk on partsupp USING BRIN (ps_partkey) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE); -- TODO keep minmax or bloom?
+CREATE INDEX ps_bloom_sk on partsupp USING BRIN (ps_suppkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+-- CREATE INDEX ps_bloom_pk_sk on partsupp USING BRIN (ps_partkey int4_bloom_ops, ps_suppkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
 
 -- CUSTOMER indices and constraints (SF * 150,000)
 CREATE UNIQUE INDEX c_ck ON customer (c_custkey ASC);
 ALTER TABLE customer ADD PRIMARY KEY USING INDEX c_ck;
-CREATE INDEX c_nk ON customer (c_nationkey ASC);
-ALTER TABLE customer ADD FOREIGN KEY (c_nationkey) REFERENCES nation (n_nationkey) ON DELETE CASCADE;
+-- CREATE INDEX c_nk ON customer (c_nationkey ASC);  -- replaced by bloom!
+-- ALTER TABLE customer ADD FOREIGN KEY (c_nationkey) REFERENCES nation (n_nationkey) ON DELETE CASCADE;
+
+CREATE INDEX c_bloom_ck ON customer USING BRIN (c_custkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX c_bloom_ms ON customer USING BRIN (c_mktsegment bpchar_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX c_brin_ab ON customer USING BRIN (c_acctbal) WITH (pages_per_range = REPLACEME_BRIN_PAGES_PER_RANGE);
+CREATE INDEX c_bloom_nk on customer USING BRIN (c_nationkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
 
 -- ORDERS indices and constraints (SF * 1,500,000)
 CREATE UNIQUE INDEX o_ok ON orders (o_orderkey ASC);
 ALTER TABLE orders ADD PRIMARY KEY USING INDEX o_ok;
-CREATE INDEX o_ck ON orders (o_custkey ASC);
-CREATE INDEX o_od ON orders (o_orderdate ASC);
-ALTER TABLE orders ADD FOREIGN KEY (o_custkey) REFERENCES customer (c_custkey) ON DELETE CASCADE;
+-- CREATE INDEX o_ck ON orders (o_custkey ASC); -- use BLOOM
+-- CREATE INDEX o_od ON orders (o_orderdate ASC); -- use BRIN
+-- ALTER TABLE orders ADD FOREIGN KEY (o_custkey) REFERENCES customer (c_custkey) ON DELETE CASCADE;
+
 
 CREATE INDEX o_brin_od ON orders USING BRIN (o_orderdate) WITH (pages_per_range = REPLACEME_BRIN_PAGES_PER_RANGE);
+CREATE INDEX o_bloom_ok ON orders USING BRIN (o_orderkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX o_bloom_ck ON orders USING BRIN (o_custkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
 
 -- LINEITEM indices and constraints (~ SF * 600,000)
 CREATE UNIQUE INDEX l_ok_ln ON lineitem (l_orderkey, l_linenumber);
-ALTER TABLE lineitem ADD PRIMARY KEY USING INDEX l_ok_ln;
-CREATE INDEX l_ok ON lineitem (l_orderkey ASC);
-CREATE INDEX l_pk ON lineitem (l_partkey ASC);
-CREATE INDEX l_sk ON lineitem (l_suppkey ASC);
-CREATE INDEX l_sd ON lineitem (l_shipdate ASC);
-CREATE INDEX l_cd ON lineitem (l_commitdate ASC);
-CREATE INDEX l_rd ON lineitem (l_receiptdate ASC);
-CREATE INDEX l_pk_sk ON lineitem (l_partkey ASC, l_suppkey ASC);
-CREATE INDEX l_sk_pk ON lineitem (l_suppkey ASC, l_partkey ASC);
+-- ALTER TABLE lineitem ADD PRIMARY KEY USING INDEX l_ok_ln;
+-- CREATE INDEX l_ok ON lineitem (l_orderkey ASC); -- BLOOM
+-- CREATE INDEX l_pk ON lineitem (l_partkey ASC); -- BLOOM
+-- CREATE INDEX l_sk ON lineitem (l_suppkey ASC); -- BLOOM
+-- CREATE INDEX l_sd ON lineitem (l_shipdate ASC); -- BRIN
+-- CREATE INDEX l_cd ON lineitem (l_commitdate ASC); -- BRIN
+-- CREATE INDEX l_rd ON lineitem (l_receiptdate ASC); -- BRIN
+-- CREATE INDEX l_pk_sk ON lineitem (l_partkey ASC, l_suppkey ASC); -- BLOOM
+-- CREATE INDEX l_sk_pk ON lineitem (l_suppkey ASC, l_partkey ASC); -- BLOOM
+
+
+-- ALTER TABLE lineitem ADD FOREIGN KEY (l_orderkey) REFERENCES orders (o_orderkey) ON DELETE CASCADE;
+-- ALTER TABLE lineitem ADD FOREIGN KEY (l_partkey, l_suppkey) REFERENCES partsupp (ps_partkey, ps_suppkey) ON DELETE CASCADE;
+
 
 CREATE INDEX l_brin_sd on lineitem USING BRIN (l_shipdate) WITH (pages_per_range = REPLACEME_BRIN_PAGES_PER_RANGE);
 CREATE INDEX l_brin_cd on lineitem USING BRIN (l_commitdate) WITH (pages_per_range = REPLACEME_BRIN_PAGES_PER_RANGE);
 CREATE INDEX l_brin_rd on lineitem USING BRIN (l_receiptdate) WITH (pages_per_range = REPLACEME_BRIN_PAGES_PER_RANGE);
 CREATE INDEX l_brin_discount on lineitem USING BRIN (l_discount) WITH (pages_per_range = REPLACEME_BRIN_PAGES_PER_RANGE);
 CREATE INDEX l_brin_qty on lineitem USING BRIN (l_quantity) WITH (pages_per_range = REPLACEME_BRIN_PAGES_PER_RANGE);
+CREATE INDEX l_bloom_ok ON lineitem USING BRIN (l_orderkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX l_bloom_pk ON lineitem USING BRIN (l_partkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX l_bloom_sk ON lineitem USING BRIN (l_suppkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+-- CREATE INDEX l_bloom_pk_sk ON lineitem USING BRIN (l_partkey int4_bloom_ops, l_suppkey int4_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX l_bloom_sm ON lineitem USING BRIN (l_shipmode bpchar_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
+CREATE INDEX l_bloom_si ON lineitem USING BRIN (l_shipinstruct bpchar_bloom_ops) WITH (pages_per_range = REPLACEME_BLOOM_PAGES_PER_RANGE);
 
 
-ALTER TABLE lineitem ADD FOREIGN KEY (l_orderkey) REFERENCES orders (o_orderkey) ON DELETE CASCADE;
-ALTER TABLE lineitem ADD FOREIGN KEY (l_partkey, l_suppkey) REFERENCES partsupp (ps_partkey, ps_suppkey) ON DELETE CASCADE;
 
-
-
--- CREATE INDEX <index_name> ON <table> USING BRIN (<columns...>) [ WITH (pages_per_range = <num>) ];
+-- CREATE INDEX <index_name> ON <table> USING BRIN (<columns...> [<type>_bloom_ops]) [ WITH (pages_per_range = <num>) ];
 -- CLUSTER <table> USING <index_name>;

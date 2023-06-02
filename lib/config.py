@@ -102,6 +102,7 @@ BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
 
 # Results
 RESULTS_ROOT = BUILD_ROOT / 'results'
+FIGURES_ROOT = BUILD_ROOT / 'figures'
 CONFIG_FILE_NAME = 'test_config.json'
 CONSTRAINTS_FILE = 'constraints.csv'
 INDEXES_FILE = 'indexes.csv'
@@ -115,7 +116,8 @@ COLLECTED_RESULTS_CSV = 'results.csv'
 # the same number of *rows* per range. (approximately - blocks are padded slightly if not exactly a multiple of the row
 # size) This value is divided by the block size (in kB), so it should be a common multiple of all block sizes.
 # use 256 KiB so it matches the smallest block group size we're using
-BASE_PAGES_PER_RANGE = 32 * 8  # note: 128 is the default 'blocks_per_range' and 8 (kB) is default block size.
+BRIN_BASE_PAGES_PER_RANGE = 32 * 8  # note: 128 is the default 'blocks_per_range' and 8 (kB) is default block size.
+BLOOM_BASE_PAGES_PER_RANGE = 32 * 8
 
 # Cgroup to run postgres under to limit total system memory
 PG_CGROUP: str = 'postgres_pbm'

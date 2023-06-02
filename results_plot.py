@@ -1,11 +1,18 @@
 #!/usr/bin/env -S python3 -i
+import sys
+import os
+
 import pandas as pd
 from typing import Union, Iterable, Optional, Sequence, Callable
 from collections import OrderedDict
+from pathlib import Path
+from datetime import datetime as dt
+import time
 import matplotlib.pyplot as plt
 import matplotlib
 from matplotlib.ticker import FixedLocator, FixedFormatter
 import seaborn.objects as so
+import tikzplotlib
 
 from lib.config import *
 
@@ -20,6 +27,18 @@ rename_cols = {
     'Benchmark Runtime (nanoseconds)': 'total_time_ns',
     'block size': 'block_size',
 }
+
+
+def tikzplotlib_fix_ncols(obj):
+    """
+    workaround for matplotlib 3.6 renamed legend's _ncol to _ncols, which breaks tikzplotlib
+    Stolen from: https://stackoverflow.com/a/75903189
+    """
+    if hasattr(obj, "_ncols"):
+        obj._ncol = obj._ncols
+    for child in obj.get_children():
+        tikzplotlib_fix_ncols(child)
+    return obj
 
 
 def to_mb(ms: str):
@@ -167,7 +186,10 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
         # actually plot the current group
         err_bars = avg_y_values
         if err_bars:
-            ax.errorbar(df_plot[x], df_plot[y], yerr=df_plot['err'], label=grp_name(grp), capsize=3)
+            lbl = grp_name(grp)
+            ebar = ax.errorbar(df_plot[x], df_plot[y], yerr=df_plot['err'], capsize=3)  # label=lbl,
+            # workaround for tikzplotlib: https://github.com/nschloe/tikzplotlib/issues/218#issuecomment-854912145
+            ebar[0].set_label(lbl)
             if logx:
                 ax.set_xscale('log')
             # plotfn(df_plot[x], df_plot[y], label=grp_name(grp), yerr=df_plot['err'])
@@ -266,7 +288,8 @@ def add_reads(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: str, hitrate=True, runtime=True, data_processed=False, iorate=True, iolat=True,
+def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
+                             hitrate=True, runtime=True, data_processed=False, iorate=True, iolat=True,
                              separate_hitrate=False, time_ybound=None):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
     group_cols = ['branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', 'pbm_idx_scan_num_counts']
@@ -278,14 +301,14 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
     ret_list = []
 
     ret_list += [
-        plot_exp(df, exp, y='hit_rate', ylabel='Hit rate',
+        plot_exp(df, exp, y='hit_rate', ylabel='Hit rate', ybound=(0, 1),
                  title=f'Hit rate vs parallelism - {subtitle}', **parallelism_common_args),
     ] if hitrate else []
 
     ret_list += [
-        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap hit rate',
+        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap hit rate', ybound=(0, 1),
                  title=f'Heap hit rate vs parallelism - {subtitle}', **parallelism_common_args),
-        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index hit rate',
+        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index hit rate', ybound=(0, 1),
                  title=f'Index hit rate vs parallelism - {subtitle}', **parallelism_common_args),
     ] if separate_hitrate else []
 
@@ -349,14 +372,29 @@ def plot_figures_tpcc(df: pd.DataFrame, exp: str, subtitle: str):
     return res_plots
 
 
+def create_out_dir() -> Path:
+    # Create directory for results
+    while True:
+        ts = dt.now()
+        ts_str = ts.strftime('%Y-%m-%d_%H-%M')
+        res_dir = FIGURES_ROOT / f'{ts_str}'
+        try:
+            os.makedirs(res_dir)
+            return res_dir
+        except FileExistsError:
+            # if the file already exists, wait and try again with new timestamp
+            print(f'WARNING: trying to save results to {res_dir} but it already exists! retrying...')
+            time.sleep(15)
 
-def main(df: pd.DataFrame):
+
+def main(df: pd.DataFrame, save_as_latex: bool):
     # Output results
     print('================================================================================')
     print('== Post-process interactive prompt:')
     print('==   `df` contains a dataframe of the results')
     print('==   `plt` is `matplotlib.pyplot`')
     print('================================================================================')
+
 
     print(f'Generating plots...')
 
@@ -373,9 +411,27 @@ def main(df: pd.DataFrame):
         # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_ssd_3', 'SSD small block groups'),
         # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_largeblks_ssd_3', 'SSD large block groups'),  # failed on second experiment (OOM?) (1 item in DF)
         # *plot_figures_parallelism(df, ['parallelism_idx_ssd_5', 'parallelism_idx_ssd_pbm4_1'], 'index microbenchmarks', separate_hitrate=True),  # index scans (14)
-        *plot_figures_parallelism(df, ['parallelism_idx_ssd__s2_r5_1', 'parallelism_idx_ssd_pbm4_s2_r5_1'], '2% index microbenchmarks', separate_hitrate=True),  # 2% index scans (15)
+        # *plot_figures_parallelism(df, ['parallelism_idx_ssd__s2_r5_1', 'parallelism_idx_ssd_pbm4_s2_r5_1'], '2% index microbenchmarks',
+        #                           separate_hitrate=True, iorate=False, iolat=False),  # 2% index scans (not saved)
+
+        # *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], '2% index microbenchmarks', separate_hitrate=True, iorate=False, iolat=False),  # 1% w/o evict whole group (not saved) -- still no improvement!
+
+
+        # try saving results to latex...
+        *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], 'test plotting!', separate_hitrate=False, iorate=False, iolat=False),
     ]
 
+    print(f'{save_as_latex = }')
+
+    if save_as_latex:
+        fig_dir = create_out_dir()
+        print(f'Saving plots to {fig_dir}')
+
+        for ax in plots:
+            tikzplotlib_fix_ncols(ax.figure)
+            tikzplotlib.save(fig_dir / ax.title.get_text(), figure=ax.figure, externalize_tables=False)
+    else:
+        print(f'NOT saving plots! run with `save` parameter to save results to latex')
 
     print(f'Showing plots...')
     plt.show()
@@ -386,6 +442,12 @@ def main(df: pd.DataFrame):
 
 if __name__ == '__main__':
     # Read in the data, converting certain column names
+
+    save_as_latex = False
+    if len(sys.argv) > 1 and sys.argv[1].lower() == 'save':
+        save_as_latex = True
+
+
     df = pd.read_csv(COLLECTED_RESULTS_CSV, keep_default_na=False).rename(columns=rename_cols)
     df_orig = df.copy()
 
@@ -405,7 +467,7 @@ if __name__ == '__main__':
     df['lineitem_idx_hitrate'] = df['lineitem_idx_blks_hit'] / (df['lineitem_idx_blks_hit'] + df['lineitem_idx_blks_read'])
 
 
-    df, plots = main(df)
+    df, plots = main(df, save_as_latex)
 
 
     # shmem_at_sf100_with_iostats
