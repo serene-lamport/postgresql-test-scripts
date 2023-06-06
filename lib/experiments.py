@@ -45,13 +45,14 @@ BBASE_WARMUP_TIME = 10
 
 # Allowed sizes of block groups (in KiB). Database is compiled for each of these sizes.
 # Must be a power of 2 and multiple of block size
-BLOCK_GROUP_SIZES = [256, 1024, 4096]
+# BLOCK_GROUP_SIZES = [256, 1024, 4096]
+BLOCK_GROUP_SIZES = [1024]
 # BLOCK_GROUP_SIZES = [256]
 # BLOCK_GROUP_SIZES = [256, 4096]
 
 # PG_WORK_MEM = '32MB'
 PG_WORK_MEM = '4MB'
-# TODO maybe make this smaller? with 32 workers, 32MB each is 1GB... Default is 4MB! (why did I increase it to begin with?)
+
 
 # Defaults for parameters with multiple options
 DEFAULT_BLOCK_SIZE = 8  # kB, must be power of 2 between 1 and 32

@@ -3,7 +3,7 @@ import sys
 import os
 
 import pandas as pd
-from typing import Union, Iterable, Optional, Sequence, Callable
+from typing import Union, Iterable, Optional, Sequence, Callable, List
 from collections import OrderedDict
 from pathlib import Path
 from datetime import datetime as dt
@@ -267,7 +267,7 @@ def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
 #                     )
 
 
-def add_reads(df: pd.DataFrame) -> pd.DataFrame:
+def post_process_data(df: pd.DataFrame) -> pd.DataFrame:
     # convert hardware stat columns to numeric
     for c in SYSBLOCKSTAT_COLS:
         df[c] = pd.to_numeric(df[c])
@@ -285,12 +285,24 @@ def add_reads(df: pd.DataFrame) -> pd.DataFrame:
     df['pg_disk_wait'] = df.db_blk_read_time / 1000 / 60
     df['hw_disk_wait'] = df.read_ticks / 1000 / 60
 
+    # Convert shared buffers config to numbers for plotting
+    df['shmem_mb'] = df['shared_buffers'].map(to_mb)
+    df['data_read_per_stream'] = df.data_read_gb / df.parallelism
+    df['data_processed_per_stream'] = df.data_processed_gb / df.parallelism
+    df['data_read_per_s'] = df.data_read_gb / df.max_stream_s
+    df['data_processed_per_s'] = df.data_processed_gb / df.max_stream_s
+    df['avg_latency_s'] = df.avg_latency_ms / 1000
+
+    # Calculate separate heap & index hitrate
+    df['lineitem_heap_hitrate'] = df['lineitem_heap_blks_hit'] / (df['lineitem_heap_blks_hit'] + df['lineitem_heap_blks_read'])
+    df['lineitem_idx_hitrate'] = df['lineitem_idx_blks_hit'] / (df['lineitem_idx_blks_hit'] + df['lineitem_idx_blks_read'])
+
     return df
 
 
 def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
                              hitrate=True, runtime=True, data_processed=False, iorate=True, iolat=True,
-                             separate_hitrate=False, time_ybound=None):
+                             separate_hitrate=False, time_ybound=None, hitrate_ybound=None):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
     group_cols = ['branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', 'pbm_idx_scan_num_counts']
     parallelism_common_args = {
@@ -301,14 +313,14 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
     ret_list = []
 
     ret_list += [
-        plot_exp(df, exp, y='hit_rate', ylabel='Hit rate', ybound=(0, 1),
+        plot_exp(df, exp, y='hit_rate', ylabel='Hit rate', ybound=hitrate_ybound,
                  title=f'Hit rate vs parallelism - {subtitle}', **parallelism_common_args),
     ] if hitrate else []
 
     ret_list += [
-        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap hit rate', ybound=(0, 1),
+        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap hit rate', ybound=hitrate_ybound,
                  title=f'Heap hit rate vs parallelism - {subtitle}', **parallelism_common_args),
-        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index hit rate', ybound=(0, 1),
+        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index hit rate', ybound=hitrate_ybound,
                  title=f'Index hit rate vs parallelism - {subtitle}', **parallelism_common_args),
     ] if separate_hitrate else []
 
@@ -387,7 +399,17 @@ def create_out_dir() -> Path:
             time.sleep(15)
 
 
-def main(df: pd.DataFrame, save_as_latex: bool):
+def save_plots_as_latex(plots: List[plt.Axes]):
+    fig_dir = create_out_dir()
+    print(f'Saving plots to {fig_dir}')
+
+    for ax in plots:
+        tikzplotlib_fix_ncols(ax.figure)
+        tikzplotlib.save(fig_dir / ax.title.get_text(), figure=ax.figure, externalize_tables=False)
+
+
+
+def main(df: pd.DataFrame, df_old: pd.DataFrame):
     # Output results
     print('================================================================================')
     print('== Post-process interactive prompt:')
@@ -417,24 +439,12 @@ def main(df: pd.DataFrame, save_as_latex: bool):
         # *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], '2% index microbenchmarks', separate_hitrate=True, iorate=False, iolat=False),  # 1% w/o evict whole group (not saved) -- still no improvement!
 
 
+        *plot_figures_parallelism(df_old, ['parallelism_ssd_btree_1'], 'idx + btree', separate_hitrate=False, iorate=False, iolat=False),
+
+
         # try saving results to latex...
-        *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], 'test plotting!', separate_hitrate=False, iorate=False, iolat=False),
+        # *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], 'test plotting!', separate_hitrate=False, iorate=False, iolat=False),
     ]
-
-    print(f'{save_as_latex = }')
-
-    if save_as_latex:
-        fig_dir = create_out_dir()
-        print(f'Saving plots to {fig_dir}')
-
-        for ax in plots:
-            tikzplotlib_fix_ncols(ax.figure)
-            tikzplotlib.save(fig_dir / ax.title.get_text(), figure=ax.figure, externalize_tables=False)
-    else:
-        print(f'NOT saving plots! run with `save` parameter to save results to latex')
-
-    print(f'Showing plots...')
-    plt.show()
 
     return df, plots
 
@@ -442,33 +452,48 @@ def main(df: pd.DataFrame, save_as_latex: bool):
 
 if __name__ == '__main__':
     # Read in the data, converting certain column names
-
-    save_as_latex = False
-    if len(sys.argv) > 1 and sys.argv[1].lower() == 'save':
-        save_as_latex = True
-
+    args = sys.argv[1:]
 
     df = pd.read_csv(COLLECTED_RESULTS_CSV, keep_default_na=False).rename(columns=rename_cols)
     df_orig = df.copy()
 
-    # Add some columns for convenience
+    # include some results from the old set of experiments
+    old_experiments_to_include = [
+        # 'parallelism_idx_ssd_5',  # trailing index benchmarks with non-PBM4 branches
+    ]
 
-    # Convert shared buffers config to numbers for plotting
-    df['shmem_mb'] = df['shared_buffers'].map(to_mb)
-    df['data_read_per_stream'] = df.data_read_gb / df.parallelism
-    df['data_processed_per_stream'] = df.data_processed_gb / df.parallelism
-    df['data_read_per_s'] = df.data_read_gb / df.max_stream_s
-    df['data_processed_per_s'] = df.data_processed_gb / df.max_stream_s
-    df['avg_latency_s'] = df.avg_latency_ms / 1000
-    df = add_reads(df)
+    # old experiments
+    other_dfs = []
+    for old_res in os.listdir('old_results'):
+        other_dfs.append(pd.read_csv('old_results/' + old_res, keep_default_na=False).rename(columns=rename_cols))
+    df_old = pd.concat(other_dfs, ignore_index=True)
 
-    # Calculate separate heap & index hitrate
-    df['lineitem_heap_hitrate'] = df['lineitem_heap_blks_hit'] / (df['lineitem_heap_blks_hit'] + df['lineitem_heap_blks_read'])
-    df['lineitem_idx_hitrate'] = df['lineitem_idx_blks_hit'] / (df['lineitem_idx_blks_hit'] + df['lineitem_idx_blks_read'])
+    df = pd.concat([df, df_old[df_old.experiment.isin(old_experiments_to_include)]], ignore_index=True)
+
+    # Add some columns for convenience/plotting
+    df = post_process_data(df)
+    df_old = post_process_data(df_old)
+
+    # generate the plots
+    df, plots = main(df, df_old)
+
+    # decide what to do with the plots
+    def save_plots():
+        save_plots_as_latex(plots)
+
+    def show_plots():
+        print(f'Showing plots...')
+        plt.show()
+
+    for arg in args:
+        arg = arg.lower()
+        if arg == 'save':
+            save_plots()
+        elif arg in ['plot', 'show']:
+            show_plots()
 
 
-    df, plots = main(df, save_as_latex)
-
+# TODO clean this up, was some manual data analysis after generating the plots
 
     # shmem_at_sf100_with_iostats
     # shmem_at_sf100_with_caching

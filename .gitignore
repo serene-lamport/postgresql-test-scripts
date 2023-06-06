@@ -4,3 +4,4 @@ test_sql/
 .fleet/
 *.pyc
 old/
+old_results/

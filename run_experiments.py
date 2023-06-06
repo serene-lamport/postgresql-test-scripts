@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-from dataclasses import replace
 from typing import Iterable
-from datetime import datetime as dt
 from itertools import product
 import sys
 
@@ -504,56 +502,6 @@ def main_tpch():
     # TODO test with higher selectivity to match the "largemem" tests?
 
 
-def ssd_micro_idx():
-    data_root = pathlib.Path('/hdd2/pgdata')
-    dev_stats = 'sda/sda3'
-    ssd_args = {'data_root': (data_root, dev_stats), 'db_host': 'tem06'}
-    common_args = {'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'cache_time': 10, 'cgmem_gb': 3.0}
-
-    common_idx_args = {'selectivity': 0.01, 'pct_of_range': 5, 'cm': 6, 'shmem': '2560MB', **common_args}
-    # PBM4 NOT using frequency-based stats
-    run_tests('parallelism_idx_ssd_pbm4_1',
-              test_micro_index_parallelism(rand_seeds[5:5], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
-                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 0}),
-              skip=0, dry_run=False)
-    # PBM4 WITH inverse-frequency-based stats (in case it makes any difference... probably not for this workload)
-    run_tests('parallelism_idx_ssd_pbm4_1',
-              test_micro_index_parallelism(rand_seeds[5:5], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
-                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 2**14}),
-              skip=0, dry_run=False)
-
-    # for non-PBM4 as reference
-    run_tests('parallelism_idx_ssd_5',
-              test_micro_index_parallelism(rand_seeds[5:5], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[1, 10],
-                                           branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],),
-              skip=0, dry_run=False)
-
-
-
-    # same experiments but tweak selectivity
-    common_idx_args = {'selectivity': 0.02, 'pct_of_range': 5, 'cm': 5, 'shmem': '2560MB', **common_args}
-    # PBM4 NOT using frequency-based stats
-    run_tests('parallelism_idx_ssd_pbm4_s2_r5_1',
-              test_micro_index_parallelism(rand_seeds[3:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
-                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 0}),)
-    # PBM4 WITH inverse-frequency-based stats (in case it makes any difference... probably not for this workload)
-    run_tests('parallelism_idx_ssd_pbm4_s2_r5_1',
-              test_micro_index_parallelism(rand_seeds[0:0], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
-                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 2**14}),)
-    # for non-PBM4 as reference
-    run_tests('parallelism_idx_ssd__s2_r5_1',
-              test_micro_index_parallelism(rand_seeds[3:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[1, 10],
-                                           branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],),)
-
-
-    # 1% with evict_whole_block_group turned OFF!
-    common_idx_args = {'selectivity': 0.01, 'pct_of_range': 5, 'cm': 6, 'shmem': '2560MB', **common_args}
-    run_tests('parallelism_idx_ssd_no_whole_bg_1',
-              test_micro_index_parallelism(rand_seeds[3:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
-                                           branches=[BRANCH_PBM4], extra_pg_args={'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 0, 'pbm_evict_whole_block_group': False}),)
-    run_tests('parallelism_idx_ssd_no_whole_bg_1',
-              test_micro_index_parallelism(rand_seeds[3:3], **common_idx_args, **ssd_args, blk_sz=8, bg_sz=1024, nsamples=[10],
-                                           branches=[BRANCH_PBM2], extra_pg_args={'pbm_evict_whole_block_group': False}),)
 
 
 # Run the same test on an ssd on tem06 instead.
@@ -582,13 +530,47 @@ def ssd_tests():
     #                                  nsamples=[10], branches=[BRANCH_PBM2, BRANCH_PBM3], nvictims=10, ))
 
 
-    # run the experiments with the same setup, but B-Tree index scans instead
-    run_tests('parallelism_ssd_btree_1',
-              test_micro_parallelism(rand_seeds[0:3], **common_seq_args, **ssd_args, nsamples=[1, 10],
-                                     pbm4_extra_args={'pbm_evict_use_freq': False}, indexes='btree',
-                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3, BRANCH_PBM4], ))
+    # TODO with BRANCH_PBM2 (nsamples = 1, 10) and BRANCH_PBM4
 
 
+def test_micro_trailing_idx():
+    ssd_args = {'data_root': (pathlib.Path('/hdd2/pgdata'), 'sda/sda3'), 'db_host': 'tem06'}
+    common_args = {
+        'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'cache_time': 10, 'cgmem_gb': 3.0,
+        'selectivity': 0.01, 'pct_of_range': 5, 'cm': 6, 'shmem': '2560MB', 'blk_sz': 8, 'bg_sz': 1024,
+        'pbm4_extra_args': {'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 0},
+    }
+
+    # for non-PBM4 as reference
+    run_tests('micro_idx_parallelism_baseline_1',
+              test_micro_index_parallelism(rand_seeds[0:3], **common_args, **ssd_args, nsamples=[1, 10],
+                                           branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],),)
+
+    # PBM4 NOT using frequency-based stats
+    run_tests('micro_idx_parallelism_pbm4_1',
+              test_micro_index_parallelism(rand_seeds[0:3], **common_args, **ssd_args, nsamples=[10],
+                                           branches=[BRANCH_PBM4],),)
+
+
+def test_micro_seq_index_scans():
+    """Microbenchmarks with B-Tree indexes"""
+    ssd_args = {'data_root': (pathlib.Path('/hdd2/pgdata'), 'sda/sda3'), 'db_host': 'tem06'}
+    common_args = {
+        **ssd_args,
+        'cache_time': 10, 'cgmem_gb': 3.0,
+        'selectivity': 0.3, 'cm': 4, 'shmem': '2560MB', 'indexes': 'btree',
+        'pbm4_extra_args': {'pbm_evict_use_freq': False},
+    }
+    standard_args = {'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'nsamples': [10],}
+
+    # the "fast" ones as baseline...
+    run_tests('parallelism_ssd_btree_1', test_micro_parallelism(rand_seeds[3:3], **common_args, **standard_args, branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM3,], ))
+
+    # slow baseline configurations... skip 32 parallel workers, we know it is slow
+    run_tests('parallelism_ssd_btree_1', test_micro_parallelism(rand_seeds[1:3], **common_args, nsamples=[10], parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24], branches=[BRANCH_PBM2,], ))
+
+    # with support implemented for index scans:
+    run_tests('parallelism_ssd_btree_pbm4_1', test_micro_parallelism(rand_seeds[0:3], **common_args, **standard_args, branches=[BRANCH_PBM4,], ))
 
 
 def main_tpcc_hdd():
@@ -601,26 +583,25 @@ def main_tpcc_ssd():
     run_tests('tpcc_basic_parallelism_largeblks_ssd_3', test_tpcc(rand_seeds[:6], use_ssd=True, cgmem=4.0, blk_sz=32, bg_sz=4096))
 
 
-
-
 if __name__ == '__main__':
-    if len(sys.argv) > 1:
-        workload_type = sys.argv[1].lower()
-    else:
+    if len(sys.argv) <= 1:
         raise Exception("Expected a workload type!")
 
-    # print(f'workload = {workload_type}')
+    experiments = {
+        "micro_seq_idx": test_micro_seq_index_scans,
+        "micro_trailing_idx": test_micro_trailing_idx,
+    }
 
-    if workload_type == 'tpch':
-        main_tpch()
-    elif workload_type == 'tpcc_hdd':
-        main_tpcc_hdd()
-    elif workload_type == 'tpch_ssd':
-        ssd_tests()
-    elif workload_type == 'tpcc_ssd':
-        main_tpcc_ssd()
+    # check arguments first
+    for workload in sys.argv[1:]:
+        if workload.lower() in experiments:
+            print(f'Got workload = {workload}')
+        else:
+            raise Exception(f'Unknown experiment: {workload}')
 
-    else:
-        print(f'unknown workload type "{workload_type}"!')
-
-    # main_tpch()
+    # run the specified workload(s) in order
+    for workload in sys.argv[1:]:
+        test_fn = experiments[workload.lower()]
+        print(f'>>>>> STARTING WORKLOAD = {workload} <<<<<')
+        test_fn()
+        print(f'>>>>> COMPLETED WORKLOAD = {workload} <<<<<')
