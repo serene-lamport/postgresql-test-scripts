@@ -122,7 +122,6 @@ def format_branch_ns_nv_inc(to_fmt: Iterable[str]) -> str:
         return base_fmt
 
 
-
 def average_series(df: pd.DataFrame, /, x, y, other_cols=None):
     """
     Compute the average and error for a series.
@@ -144,7 +143,6 @@ def average_series(df: pd.DataFrame, /, x, y, other_cols=None):
     df_ret['err'] = df_sem * 1.96
 
     return df_ret.reset_index()
-
 
 
 def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
@@ -187,12 +185,12 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
         err_bars = avg_y_values
         if err_bars:
             lbl = grp_name(grp)
-            ebar = ax.errorbar(df_plot[x], df_plot[y], yerr=df_plot['err'], capsize=3)  # label=lbl,
+            ebar = ax.errorbar(df_plot[x], df_plot[y], yerr=df_plot['err'], capsize=3)
             # workaround for tikzplotlib: https://github.com/nschloe/tikzplotlib/issues/218#issuecomment-854912145
+            # set the labels *after* plotting the series to prevent the error bars themselves being labelled too
             ebar[0].set_label(lbl)
             if logx:
                 ax.set_xscale('log')
-            # plotfn(df_plot[x], df_plot[y], label=grp_name(grp), yerr=df_plot['err'])
         else:
             plotfn(df_plot[x], df_plot[y], label=grp_name(grp))
 
@@ -219,6 +217,7 @@ def bar_plot(df_plot: pd.DataFrame, x, y,):
     return df_plot[y].plot.bar(yerr=df_plot.yerr)
 
 
+# OBSOLETE: experiment with plotting using seaborn instead of matplotlib directly
 def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
                 x, xlabels=None, logx=False, xlabel=None,
                 y, ybound=None, ylabel=None,  avg_y_values=False,
@@ -268,6 +267,8 @@ def plot_exp_sb(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
 
 
 def post_process_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Generate extra columns to be plotted for the given dataframe"""
+
     # convert hardware stat columns to numeric
     for c in SYSBLOCKSTAT_COLS:
         df[c] = pd.to_numeric(df[c])
@@ -348,7 +349,6 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
                  title=f'Hardware IO latency vs parallelism - {subtitle}', **parallelism_common_args),
     ] if iolat else []
 
-
     return ret_list
 
 
@@ -385,7 +385,7 @@ def plot_figures_tpcc(df: pd.DataFrame, exp: str, subtitle: str):
 
 
 def create_out_dir() -> Path:
-    # Create directory for results
+    """Create directory for latex results"""
     while True:
         ts = dt.now()
         ts_str = ts.strftime('%Y-%m-%d_%H-%M')
@@ -406,7 +406,6 @@ def save_plots_as_latex(plots: List[plt.Axes]):
     for ax in plots:
         tikzplotlib_fix_ncols(ax.figure)
         tikzplotlib.save(fig_dir / ax.title.get_text(), figure=ax.figure, externalize_tables=False)
-
 
 
 def main(df: pd.DataFrame, df_old: pd.DataFrame):
@@ -449,7 +448,10 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
     return df, plots
 
 
-
+"""
+Main entry point: read the results csv file (including old ones), compute some extra columns, plot results,
+and then do some more processing for manual examination/debugging.
+"""
 if __name__ == '__main__':
     # Read in the data, converting certain column names
     args = sys.argv[1:]
@@ -495,11 +497,6 @@ if __name__ == '__main__':
 
 # TODO clean this up, was some manual data analysis after generating the plots
 
-    # shmem_at_sf100_with_iostats
-    # shmem_at_sf100_with_caching
-    # shmem_at_sf100_with_caching_2
-    # shmem_at_sf100_with_caching_more_iostats
-
     group_cols = [
         'experiment', 'branch', 'block_size', 'block_group_size',
         # 'pbm_evict_num_samples',
@@ -526,54 +523,10 @@ if __name__ == '__main__':
     res['min_s_ci'] = g['minutes_stream'].sem() * 1.96
     res['hit_rate_ci'] = g['hit_rate'].sem() * 1.96
 
-    # e1 = 'comparing_bg_lock_types'
-    # e2 = 'comparing_bg_lock_types_2'
-    # e3 = 'comparing_bg_lock_types_3'
-    # e4 = 'comparing_bg_lock_types_4'
-    #
-    # es = [e1, e2, e3, e4]
-
     cg = df[df.experiment == 'test_cgroup']
 
-    # e1 = 'shmem_at_sf100_with_caching_more_iostats'
-    # e2 = 'shmem_at_sf100_with_caching_more_iostats_bs32'
-
-    e = 'shmem_at_sf100_group_eviction'
-    e4096 = 'shmem_at_sf100_group_eviction_bgsz4096'
-
-    f = 'sampling_overhead'
-    g = 'sampling_overhead_2'
-
-    e1 = 'shmem_at_sf100_multi_evict_nv1'
-    e10 = 'shmem_at_sf100_multi_evict_nv10'
-
     iostat_cols = ['pg_iolat', 'hw_iolat', 'pg_disk_wait', 'hw_disk_wait']
-
-
-    # TODO comparing multi eviction at sf 10 instead of 100 --- try again with the cgroup this time :/
-    e_sf10 = ['shmem_multi_evict_sf10_nv1_2', 'shmem_multi_evict_sf10_nv10_2']
-
-    # # TODO plot parallelism with cgroup limits (should look like before!) ... this graph has weird results ...
-    # e_parallel = 'parallelism_2'
-
-    # TODO plot TPCC, and at larger block sizes
-    e_tpcc = 'tpcc_basic_parallelism'
-
 
     df['heap_total'] = df.lineitem_heap_blks_hit + df.lineitem_heap_blks_read
     df['idx_total'] = df.lineitem_idx_blks_hit + df.lineitem_idx_blks_read
     df['pct_idx'] = 100 * df.idx_total / (df.idx_total + df.heap_total)
-
-    idx_exps = ['parallelism_idx_ssd_5', 'parallelism_idx_ssd_pbm4_1']
-
-    df_idx = df[df.experiment.isin(idx_exps)]
-
-    # TODO bar charts!
-    # res.loc[f].hit_rate.plot.bar(yerr=res.loc[f].hit_rate_ci)
-    # res.minutes_total.plot.bar(yerr=res.min_t_ci)
-    # plt.show()
-
-    # bar_plot(df[df.experiment == 'sampling_overhead'], x=['branch', 'pbm_evict_num_samples'], y='hit_rate')
-    # plt.show()
-
-
