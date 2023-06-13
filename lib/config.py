@@ -28,6 +28,12 @@ PG_DEFAULT_DATA_ROOT = pathlib.Path('/hdd1/pgdata')
 PG_DATA_DEVICE: str = 'sdb/sdb1'
 # TODO replace /sys/block -> /sys/class/block, and make this just `sdb1` since the hierarchy is flat there
 
+# Some of the above args for running on the SSD host
+SSD_HOST_ARGS = {
+    'data_root': (pathlib.Path('/hdd2/pgdata'), 'sda/sda3'),
+    'db_host': 'tem06'
+}
+
 # Where to clone/compile everything (absolute path)
 BUILD_ROOT = pathlib.Path('/home/ta3vande/PG_TESTS')
 

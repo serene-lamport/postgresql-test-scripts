@@ -212,6 +212,46 @@ def test_tpcc(seeds: List[int], nsamples: List[int] = None, shmem='2560MB', cgme
             yield ExperimentConfig(pgconf, dbconf, None, bbconf, cgroup=cgroup, db_host=ssd_host if use_ssd else None)
 
 
+def run_test_tpch(seeds: List[int], *,
+                  nsamples: List[int], nvictims: int = 1,
+                  branches: List[PgBranch],
+                  shmem: str, cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
+                  extra_pg_args: dict = None, pbm4_extra_args: dict = None,
+                  indexes='btree+brin', clustering='dates'
+                  ) -> Iterable[ExperimentConfig]:
+    """Run TPCH workload"""
+    work = copy.copy(WORKLOAD_TPCH_COUNTS)
+    workload = work.workload.with_host_device(SSD_HOST_ARGS['db_host'], SSD_HOST_ARGS['data_root'][1])
+    work.workload = workload
+    dbdata = DbData(workload, sf=10, block_size=blk_sz, data_root=SSD_HOST_ARGS['data_root'][0])
+    dbsetup = DbSetup(indexes=indexes, clustering=clustering)
+    cgroup = CGroupConfig(cgmem_gb) if cgmem_gb is not None else None
+
+    parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
+
+    for seed, nworkers, branch in product(seeds, parallel_ops, branches):
+        dbbin = DbBin(branch, block_size=blk_sz, bg_size=bg_sz)
+        dbconf = DbConfig(dbbin, dbdata)
+        bbconf = BBaseConfig(nworkers=nworkers, seed=seed, workload=work)
+
+        for ns in branch_samples(branch, nsamples):
+            nv = nvictims if ns is not None and ns > 1 else None
+            if ns is not None and ns > 1:
+                ns = ns * nv
+                nv = nvictims
+            pgconf = RuntimePgConfig(shared_buffers=shmem,
+                                     pbm_evict_num_samples=ns,
+                                     pbm_evict_num_victims=nv,
+                                     synchronize_seqscans='on',
+                                     track_io_timing='on',
+                                     random_page_cost=1.1,  # default for SSD
+                                     **(extra_pg_args or {}),
+                                     **(pbm4_extra_args or {} if branch.idx_support else {}),
+                                     )
+
+            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf, cgroup=cgroup, db_host=SSD_HOST_ARGS['db_host'])
+
+
 def test_micro_base(work: CountedWorkloadConfig, seeds: List[Optional[int]], selectivity: float, ssd: bool, *,
                     cm=8, parallel_ops: List[int] = None, nsamples: List[int] = None, nvictims: int = 1,
                     cache_time: Optional[float] = None, branches: List[PgBranch] = None,
@@ -271,14 +311,14 @@ def test_micro_parallelism(seeds: List[Optional[int]], selectivity: Optional[flo
                            shmem='2GB', cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
                            data_root: (Path, str) = None, db_host: str = None,
                            indexes='lineitem_brinonly', clustering='dates',
-                           pbm4_extra_args: dict = None,) \
+                           extra_pg_args: dict = None, pbm4_extra_args: dict = None,) \
         -> Iterable[ExperimentConfig]:
     return test_micro_base(WORKLOAD_MICRO_COUNTS, seeds, selectivity, ssd=ssd,
                            cm=cm, parallel_ops=parallel_ops, nsamples=nsamples, nvictims=nvictims,
                            cache_time=cache_time, branches=branches,
                            shmem=shmem, cgmem_gb=cgmem_gb, blk_sz=blk_sz, bg_sz=bg_sz,
                            data_root=data_root, db_host=db_host,
-                           pbm4_extra_args=pbm4_extra_args,
+                           extra_pg_args=extra_pg_args, pbm4_extra_args=pbm4_extra_args,
                            indexes=indexes, clustering=clustering,
             )
 
@@ -366,23 +406,82 @@ def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], d
         run_tests(e_str, not_tried)
 
 
+def test_tpch():
+    common_args = {
+        **SSD_HOST_ARGS,
+        'cgmem_bg': 3.0, 'shmem': '2560MB', 'nsamples': [1, 10],
+    }
+
+    # run TPCH tests for main branches
+    run_tests('tpch_1', run_test_tpch(rand_seeds[0:3], **common_args, branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],))
+
+    # TODO PBM4???
+
+
+def test_micro_seqscans():
+    """Experiment: lineitem microbenchmarks with only sequential/bitmap scans"""
+    ssd_args = {'data_root': (pathlib.Path('/hdd2/pgdata'), 'sda/sda3'), 'db_host': 'tem06'}
+    common_args = {
+        **ssd_args,
+        'cache_time': 10, 'cgmem_gb': 3.0,
+        'selectivity': 0.3, 'cm': 8, 'shmem': '2560MB',
+        'indexes': 'lineitem_brinonly', 'clustering': 'dates',
+        'pbm4_extra_args': {'pbm_evict_use_freq': False},
+        'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32],  # 'nsamples': [1, 10, 100],
+    }
+
+    # Compare different branches
+    run_tests('parallelism_micro_seqscans_1',
+              test_micro_parallelism(rand_seeds[3:3], **common_args, nsamples=[1, 10, 100],
+                                     branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))  # , BRANCH_PBM4
+
+    # Try PBM-sampling with different #s of samples
+    run_tests('parallelism_micro_seqscans_1',
+              test_micro_parallelism(rand_seeds[3:3], **common_args, nsamples=[5, 20],
+                                     branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
+
+    # Try PBM-sampling with multi-eviction
+    run_tests('parallelism_micro_seqscans_1',
+              test_micro_parallelism(rand_seeds[3:3], **common_args, nsamples=[10],  nvictims=10,
+                                     branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
+
+    # TODO try PBM4? (expect no changes since no index scans)
+
+
 def test_micro_trailing_idx():
     """Experiment: lineitem microbenchmarks with un-correlated index scans, to test "trailing index scan" support."""
     ssd_args = {'data_root': (pathlib.Path('/hdd2/pgdata'), 'sda/sda3'), 'db_host': 'tem06'}
     common_args = {
+        **ssd_args,
         'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'cache_time': 10, 'cgmem_gb': 3.0,
         'selectivity': 0.01, 'pct_of_range': 5, 'cm': 6, 'shmem': '2560MB', 'blk_sz': 8, 'bg_sz': 1024,
-        'pbm4_extra_args': {'pbm_evict_use_freq': False, 'pbm_idx_scan_num_counts': 0},
+        'indexes': 'btree', 'clustering': 'dates',
+    }
+    default_pbm4_args = {
+        'pbm_evict_use_freq': False,
+        'pbm_idx_scan_num_counts': 0,
+        'pbm_evict_use_idx_scan': True,
+        'pbm_lru_if_not_requested': True,
     }
 
     # for non-PBM4 as reference
     run_tests('micro_idx_parallelism_baseline_1',
-              test_micro_index_parallelism(rand_seeds[0:3], **common_args, **ssd_args, nsamples=[1, 10],
+              test_micro_index_parallelism(rand_seeds[3:3], **common_args, nsamples=[1, 10],
                                            branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3],),)
 
     # PBM4 NOT using frequency-based stats
-    run_tests('micro_idx_parallelism_pbm4_1',
-              test_micro_index_parallelism(rand_seeds[0:3], **common_args, **ssd_args, nsamples=[10],
+    # run_tests('micro_idx_parallelism_pbm4_1',  # Also not using LRU for non-requested
+    #           test_micro_index_parallelism(rand_seeds[3:3], **common_args, nsamples=[10],
+    #                                        branches=[BRANCH_PBM4],),)
+
+    # PBM4 now using LRU tie-breaking
+    run_tests('micro_idx_parallelism_pbm4_2_idx+lru_nr',
+              test_micro_index_parallelism(rand_seeds[0:3], **common_args, nsamples=[10], pbm4_extra_args=default_pbm4_args,
+                                           branches=[BRANCH_PBM4],),)
+    # PBM4 now using LRU tie-breaking, and NOT index stuff
+    run_tests('micro_idx_parallelism_pbm4_2_no_idx+lru_nr',
+              test_micro_index_parallelism(rand_seeds[0:3], **common_args, nsamples=[10],
+                                           pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,},
                                            branches=[BRANCH_PBM4],),)
 
 
@@ -392,19 +491,41 @@ def test_micro_seq_index_scans():
     common_args = {
         **ssd_args,
         'cache_time': 10, 'cgmem_gb': 3.0,
-        'selectivity': 0.3, 'cm': 4, 'shmem': '2560MB', 'indexes': 'btree',
-        'pbm4_extra_args': {'pbm_evict_use_freq': False},
+        'selectivity': 0.3, 'cm': 4, 'shmem': '2560MB', 'indexes': 'btree', 'clustering': 'dates',
     }
-    standard_args = {'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'nsamples': [10],}
+    standard_args = {'parallel_ops': [1, 2, 4, 6, 8, 12, 16, 24, 32], 'nsamples': [10], }  # 'pbm4_extra_args': {'pbm_evict_use_freq': False},
 
     # the "fast" ones as baseline...
     run_tests('parallelism_ssd_btree_1', test_micro_parallelism(rand_seeds[3:3], **common_args, **standard_args, branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM3,], ))
 
     # slow baseline configurations... skip 32 parallel workers, we know it is slow
-    run_tests('parallelism_ssd_btree_1', test_micro_parallelism(rand_seeds[1:3], **common_args, nsamples=[10], parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24], branches=[BRANCH_PBM2,], ))
+    run_tests('parallelism_ssd_btree_1', test_micro_parallelism(rand_seeds[3:3], **common_args, nsamples=[10], parallel_ops=[1, 2, 4, 6, 8, 12, 16, 24], branches=[BRANCH_PBM2,], ))
 
-    # with support implemented for index scans:
-    run_tests('parallelism_ssd_btree_pbm4_1', test_micro_parallelism(rand_seeds[0:3], **common_args, **standard_args, branches=[BRANCH_PBM4,], ))
+    # with support implemented for index scans:  ... but NOT LRU for non-requested!
+    # run_tests('parallelism_ssd_btree_pbm4_1', test_micro_parallelism(rand_seeds[3:3], **common_args, **standard_args, branches=[BRANCH_PBM4,], ))
+    run_tests('parallelism_ssd_btree_pbm4_2', test_micro_parallelism(rand_seeds[3:3], **common_args, **standard_args, branches=[BRANCH_PBM4,], ))
+    run_tests('parallelism_ssd_btree_pbm4_3_idx+lru_nr',
+              test_micro_parallelism(rand_seeds[0:3], **common_args, **standard_args, branches=[BRANCH_PBM4,],
+                                     pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True,}))
+    run_tests('parallelism_ssd_btree_pbm4_3_no_idx+lru_nr',
+              test_micro_parallelism(rand_seeds[0:3], **common_args, **standard_args, branches=[BRANCH_PBM4,],
+                                     pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True,}))
+
+    # try again without parallel scans, maybe that is screwing things up... nope! still doesn't help :(
+    run_tests('parallelism_ssd_btree_pbm4_2_noparallel',
+              test_micro_parallelism(rand_seeds[1:1], **common_args, branches=[BRANCH_PBM4,], parallel_ops=[24], nsamples=[10],
+                                     extra_pg_args={'min_parallel_index_scan_size': '100GB'}))
+
+    # try again with LRU...
+    run_tests('parallelism_ssd_btree_pbm4_2_try_lru',
+              test_micro_parallelism(rand_seeds[3:3], **common_args, branches=[BRANCH_PBM4,], parallel_ops=[24], nsamples=[10],
+                                     extra_pg_args={'pbm_lru_if_not_requested': True}))
+    # also w/ only LRU, not idx...
+    run_tests('parallelism_ssd_btree_pbm4_2_try_lru_w/o_idx',
+              test_micro_parallelism(rand_seeds[3:3], **common_args, branches=[BRANCH_PBM4,], parallel_ops=[24], nsamples=[10],
+                                     extra_pg_args={'pbm_lru_if_not_requested': True, 'pbm_evict_use_idx_scan': False}))
+
+
 
 
 """
@@ -415,8 +536,11 @@ if __name__ == '__main__':
         raise Exception("Expected a workload type!")
 
     main_experiments = {
+        "micro_seqscans": test_micro_seqscans,
+        # TODO micro_seqscans_mem
         "micro_seq_idx": test_micro_seq_index_scans,
         "micro_trailing_idx": test_micro_trailing_idx,
+        # TODO TPCH
     }
 
     # check arguments first

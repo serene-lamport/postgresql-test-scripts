@@ -35,8 +35,8 @@ from lib.config import *
 ##############################
 
 # Postgres block size (KiB)
-PG_BLK_SIZES = [8, 32]
-# PG_BLK_SIZES = [8]
+# PG_BLK_SIZES = [8, 32]
+PG_BLK_SIZES = [8]
 
 # Time to run tests (s)
 # BBASE_TIME = 600
@@ -352,6 +352,7 @@ class RuntimePgConfig:
     # Turn on/off various features to force desired access methods
     enable_bitmapscan: Optional[bool] = None
     enable_seqscan: Optional[bool] = None
+    min_parallel_index_scan_size: Optional[str] = None
     # PBM-only fields:
     # pbm2 and later:
     pbm_evict_num_samples: Optional[int] = None
@@ -364,6 +365,7 @@ class RuntimePgConfig:
     # pbm4 and later:
     pbm_evict_use_idx_scan: Optional[bool] = None
     pbm_idx_scan_num_counts: Optional[int] = None
+    pbm_lru_if_not_requested: Optional[bool] = None
 
     # @property
     # def effective_cache_size(self):

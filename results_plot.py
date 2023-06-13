@@ -75,7 +75,9 @@ def format_brnch_ns(to_fmt: Iterable[str]) -> str:
     Based on (branch, num_samples)
     """
     to_fmt = list(to_fmt)
-    if to_fmt[0] == 'pbm2' and str(to_fmt[1]) == '1':
+    brnch = to_fmt[0]
+    samples = str(to_fmt[1])
+    if brnch == 'pbm2' and samples == '1':
         return 'Random'
 
     mapping = {
@@ -87,8 +89,10 @@ def format_brnch_ns(to_fmt: Iterable[str]) -> str:
         # TODO other branches?
     }
 
-    if to_fmt[0] in mapping:
-        return mapping[to_fmt[0]]
+    if brnch in mapping and samples != '':
+        return mapping[brnch] + f' ({samples})'
+    elif brnch in mapping:
+        return mapping[brnch]
     else:
         return format_str_or_iterable(to_fmt)
 
@@ -118,6 +122,50 @@ def format_branch_ns_nv_inc(to_fmt: Iterable[str]) -> str:
 
     if to_fmt[0] == 'pbm4' and to_fmt[3] not in [None, '', '0']:
         return f'{base_fmt}, idx_counts={to_fmt[3]}'
+    else:
+        return base_fmt
+
+
+
+        # 'branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', # 'pbm_idx_scan_num_counts',
+        # 'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_lru_if_not_requested',
+
+
+def to_bool(val: str, default: bool) -> bool:
+    true_vals = ['true', 'yes', 't', 'y', 'on']
+    false_vals = ['false', 'no', 't', 'f', 'off']
+    if not val:
+        return default
+    elif val.lower() in true_vals:
+        return True
+    elif val.lower() in false_vals:
+        return False
+    else:
+        raise Exception(f'to_bool unrecognized string: {val}')
+
+
+def default_fmt_branch(to_fmt: Iterable[str]) -> str:
+    """
+    Renamme PBM branches for the graphs.
+    Based on (branch, num_samples, num_victims, pbm_evict_use_freq, pbm_evict_use_idx_scan, pbm_lru_if_not_requested)
+    """
+    to_fmt = list(to_fmt)
+    base_fmt = format_branch_ns_nv(to_fmt)
+
+    brnch = to_fmt[0]
+    samples = str(to_fmt[1])
+    use_freq = to_bool(to_fmt[3], False)
+    use_idx = to_bool(to_fmt[4], True)
+    use_nr_lru = to_bool(to_fmt[5], True)
+
+    if brnch == 'pbm4':
+        ret = f'sampling ({samples})'
+        if use_freq:
+            ret += ' + freq'
+        if use_idx:
+            ret += ' + idx'
+        if use_nr_lru:
+            ret += ' + nr_lru'
     else:
         return base_fmt
 
@@ -303,12 +351,17 @@ def post_process_data(df: pd.DataFrame) -> pd.DataFrame:
 
 def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
                              hitrate=True, runtime=True, data_processed=False, iorate=True, iolat=True,
-                             separate_hitrate=False, time_ybound=None, hitrate_ybound=None):
+                             separate_hitrate=False, time_ybound=None, hitrate_ybound=None,
+                             extra_grp_cols=None, grp_name=default_fmt_branch):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
-    group_cols = ['branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', 'pbm_idx_scan_num_counts']
+    group_cols = [
+        'branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', # 'pbm_idx_scan_num_counts',
+        'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_lru_if_not_requested',
+        *(extra_grp_cols or []),
+    ]
     parallelism_common_args = {
         'x': 'parallelism', 'xsort': True, 'xlabel': 'Parallelism', 'xlabels': 'parallelism',
-        'group': group_cols, 'grp_name': format_branch_ns_nv_inc, 'legend_title': 'Policy',
+        'group': group_cols, 'grp_name': grp_name, 'legend_title': 'Policy',
         'avg_y_values': True,
     }
     ret_list = []
@@ -405,7 +458,7 @@ def save_plots_as_latex(plots: List[plt.Axes]):
 
     for ax in plots:
         tikzplotlib_fix_ncols(ax.figure)
-        tikzplotlib.save(fig_dir / ax.title.get_text(), figure=ax.figure, externalize_tables=False)
+        tikzplotlib.save(fig_dir / ax.title.get_text() + '.tex', figure=ax.figure, externalize_tables=False)
 
 
 def main(df: pd.DataFrame, df_old: pd.DataFrame):
@@ -420,9 +473,6 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
     print(f'Generating plots...')
 
     plots = [
-        # *plot_figures_9(df),
-        # *plot_figures_10_tpcc(df),
-        # *plot_figures_11_ssd(df),
         # *plot_figures_parallelism(df, 'parallelism_cgroup_largeblks_ssd_2', 'SSD + 3GB cgroup'),  # SSD (11)
         # *plot_figures_parallelism(df, 'parallelism_cgroup_smallblks_ssd_2', 'SSD + 3GB cgroup + small blocks'),  # SSD (11)
         # *plot_figures_parallelism(df, 'parallelism_cgroup_sel50_2', '3GB cgroup 50% selectivity', time_ybound=(0, 80)),  # 12
@@ -438,11 +488,22 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
         # *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], '2% index microbenchmarks', separate_hitrate=True, iorate=False, iolat=False),  # 1% w/o evict whole group (not saved) -- still no improvement!
 
 
-        *plot_figures_parallelism(df_old, ['parallelism_ssd_btree_1'], 'idx + btree', separate_hitrate=False, iorate=False, iolat=False),
+        # *plot_figures_parallelism(df_old, ['parallelism_ssd_btree_1'], 'idx + btree', separate_hitrate=False, iorate=False, iolat=False),
 
 
-        # try saving results to latex...
-        # *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], 'test plotting!', separate_hitrate=False, iorate=False, iolat=False),
+
+        ### sequential/bitmap scan microbenchmarks - final results
+        # *plot_figures_parallelism(df, ['parallelism_micro_seqscans_1'], 'Seq scan microbenchmarks'),
+
+        ### TODO seq parallelism with different nsamples, nvictims
+
+        ### trailing index scan microbenchmarks - final results
+        *plot_figures_parallelism(df, ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_pbm4_1'], 'Trailing index scans 1%', separate_hitrate=False, iorate=False, iolat=False),
+
+        ### sequential index scan microbenchmarks - final results
+        *plot_figures_parallelism(df, ['parallelism_ssd_btree_1', 'parallelism_ssd_btree_pbm4_2'], 'Sequential index scans', separate_hitrate=False, iorate=False, iolat=False, time_ybound=(0, 100)),
+
+        # TODO ^ consider enabling LRU think or not...
     ]
 
     return df, plots
