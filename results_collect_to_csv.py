@@ -37,7 +37,7 @@ csv_cols = [
     # configuration from configuration json file
     'block_group_size', 'workload', 'scalefactor', 'selectivity', 'clustering', 'indexes', 'shared_buffers',
     'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'pbm_evict_num_victims',
-    'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_idx_scan_num_counts',
+    'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_idx_scan_num_counts', 'pbm_lru_if_not_requested',
     'parallelism', 'time',
     'count_multiplier', 'prewarm', 'seed',
     # from OS IO statis
@@ -153,9 +153,17 @@ def collect_results_to_csv(res_dir: Path, csv_out: Path):
 
     rows = []
 
+    # Folders to ignore results from, usually because something went wrong during the test (e.g. network issues...) but the test still completed
+    ignore_dirs = {
+        'TPCH_2023-06-19_10-16-21',  # strangely completed in half the expected time, but without errors... no cgroup maybe?
+    }
+
     # Process everythign in the results directory
     conf_dir: str
     for conf_dir in os.listdir(res_dir):
+        if conf_dir in ignore_dirs:
+            print(f'Results directory {conf_dir} marked as to-be-ignored, skipping...')
+            continue
 
         # read config file if it is there
         config = read_config(conf_dir, CONFIG_FILE_NAME)

@@ -33,6 +33,10 @@ SSD_HOST_ARGS = {
     'data_root': (pathlib.Path('/hdd2/pgdata'), 'sda/sda3'),
     'db_host': 'tem06'
 }
+HDD_HOST_ARGS_TPCH = {
+    'data_root': (pathlib.Path('/hdd1/pgdata'), 'sdb/sdb1'),
+    'db_host': 'tem112'
+}
 
 # Where to clone/compile everything (absolute path)
 BUILD_ROOT = pathlib.Path('/home/ta3vande/PG_TESTS')

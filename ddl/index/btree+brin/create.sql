@@ -104,6 +104,12 @@
 -- maybe keep primary keys as BTree and remove foreign keys? (PK sometimes correlated with order...)
 ---------------------------------------
 
+
+-- Load extensions first:
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+
+
 -- REGION indices (5)
 CREATE UNIQUE INDEX r_rk ON region (r_regionkey ASC);
 ALTER TABLE region ADD PRIMARY KEY USING INDEX r_rk;

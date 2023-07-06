@@ -419,7 +419,7 @@ class ExperimentConfig:
             # Directory is workload + time
             w_str = self.bbconf.workload.workload.name.upper()
             ts = dt.now()
-            ts_str = ts.strftime('%Y-%m-%d_%H-%M')
+            ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S')
             res_dir = RESULTS_ROOT / f'{w_str}_{ts_str}'
             try:
                 os.makedirs(res_dir)
@@ -751,7 +751,8 @@ def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
 
 
 def prewarm_lineitem(data: DbData, dbhost: str):
-    """Prewarm lineitem cache for the given database config (DB must be running)"""
+    """Prewarm lineitem cache for the given database config (DB must be running)
+    """
     with pg.open(data.conn_str(dbhost)) as conn:
         conn: PgConnection
         conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
@@ -1234,7 +1235,10 @@ def drop_all_indexes_tpch(sf: int, blk_sz: int, db_host: str):
     print(f'~~~~~~~~~~ Dropping all indexes and constraints for TPCH blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
 
     dbbin = DbBin(BRANCH_POSTGRES_BASE, block_size=blk_sz)
-    dbdata = DbData(TPCH, sf=sf, block_size=blk_sz)
+    if db_host == SSD_HOST_ARGS['db_host']:
+        dbdata = DbData(TPCH, sf=sf, block_size=blk_sz, data_root=SSD_HOST_ARGS['data_root'][0])
+    else:
+        dbdata = DbData(TPCH, sf=sf, block_size=blk_sz)
     dbconf = DbConfig(dbbin, dbdata)
     with FabConnection(db_host) as fabconn:
         config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'), db_host)
@@ -1355,7 +1359,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     print(f'==   Shared memory:         {pgconf.shared_buffers}')
     if is_tpch:
         print(f'==   Index definitions:     ddl/index/{dbsetup.indexes}/')
-        print(f'==   Clustering:            dd/cluster/{dbsetup.clustering}.sql')
+        print(f'==   Clustering:            ddl/cluster/{dbsetup.clustering}.sql')
     if isinstance(bbconf.workload, WeightedWorkloadConfig):
         t = bbconf.workload.time_s
         s = t % 60
