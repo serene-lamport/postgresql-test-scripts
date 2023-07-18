@@ -165,7 +165,7 @@ def default_fmt_branch(to_fmt: Iterable[str]) -> str:
         if use_idx:
             ret += ' + idx'
         if use_nr_lru:
-            ret += ' + nr_lru'
+            ret += ' + nrlru'
         return ret
     else:
         return base_fmt
@@ -351,7 +351,7 @@ def post_process_data(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
-                             hitrate=True, runtime=True, data_processed=False, iorate=False, iolat=False,
+                             hitrate=True, runtime=True, data_processed=False, iorate=False, iolat=False, iovol=False,
                              separate_hitrate=False, time_ybound=None, hitrate_ybound=None,
                              extra_grp_cols=None, grp_name=default_fmt_branch, avg_y_values=True):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
@@ -390,6 +390,11 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
     ] if data_processed else []
 
     ret_list += [
+        plot_exp(df, exp, y='data_read_gb', ylabel='I/O volume (GB)',
+                 title=f'IO volume vs parallelism - {subtitle}', **parallelism_common_args),
+    ] if iovol else []
+
+    ret_list += [
         plot_exp(df, exp, y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
                  title=f'Postgres IO rate vs parallelism - {subtitle}', **parallelism_common_args),
         plot_exp(df, exp, y='hw_mb_per_s', ylabel='IO throughput (MiB/s)',
@@ -408,7 +413,7 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
 
 
 def plot_figures_shmem(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
-                       hitrate=True, runtime=True, data_processed=False, iorate=False, iolat=False,
+                       hitrate=True, runtime=True, data_processed=False, iorate=False, iolat=False, iovol=False,
                        separate_hitrate=False, time_ybound=None, hitrate_ybound=None,
                        extra_grp_cols=None, grp_name=default_fmt_branch, avg_y_values=True):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
@@ -445,6 +450,11 @@ def plot_figures_shmem(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
         plot_exp(df, exp, y='data_processed_per_stream', ylabel='data_processed',
                  title=f'data processed vs cache size - {subtitle}', **parallelism_common_args),
     ] if data_processed else []
+
+    ret_list += [
+        plot_exp(df, exp, y='data_read_gb', ylabel='I/O volume (GB)',
+                 title=f'IO volume vs cache size - {subtitle}', **parallelism_common_args),
+    ] if iovol else []
 
     ret_list += [
         plot_exp(df, exp, y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
@@ -545,61 +555,92 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
 
         # *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], '2% index microbenchmarks', separate_hitrate=True, iorate=False, iolat=False),  # 1% w/o evict whole group (not saved) -- still no improvement!
 
-
         # *plot_figures_parallelism(df_old, ['parallelism_ssd_btree_1'], 'idx + btree', separate_hitrate=False, iorate=False, iolat=False),
     ]
 
-
     include_seq_parallel = False
     include_seq_mem = False
-    include_seq_hdd = True
+    include_seq_hdd = False
+    include_seq_ram = False
     include_tpch = False
+    include_idx_trailing = False
+    include_idx_sequential = False
 
+    ### sequential/bitmap scan microbenchmarks - parallelism - final results
     if include_seq_parallel:
         plots += [
-            ### sequential/bitmap scan microbenchmarks - parallelism - final results
             # compare branches:
             *plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1']) | df.pbm_evict_num_samples.eq('10')],
                                       ['parallelism_micro_seqscans_1'], 'Sequential Scan Microbenchmarks',
-                                      iolat=True, iorate=True),
+                                      iolat=True, iorate=True, iovol=True,),
             # compare sample sizes:
             *plot_figures_parallelism(df[df.branch.isin(['pbm2']) & df.pbm_evict_num_victims.isin(['', '1'])],
-                                      ['parallelism_micro_seqscans_1'], 'Sequential Scans - Impact of Sample Size'),
+                                      ['parallelism_micro_seqscans_1'], 'Sequential Scans - Impact of Sample Size',
+                                      iovol=True,),
             # bulk-eviction:
             *plot_figures_parallelism(df[df.branch.isin(['pbm2']) & df.pbm_evict_num_samples.isin(['10', '20', '100'])],
-                                      ['parallelism_micro_seqscans_1'], 'Sequential Scans - Impact of Bulk Eviction'),
+                                      ['parallelism_micro_seqscans_1'], 'Sequential Scans - Impact of Bulk Eviction',
+                                      iovol=True),
         ]
 
+    ### sequential/bitmap scan microbenchmarks - memory - final results
     if include_seq_mem:
         plots += [
-            ### sequential/bitmap scan microbenchmarks - memory - final results
             # compare branches:
             *plot_figures_shmem(df[df.branch.isin(['base', 'pbm1']) | df.pbm_evict_num_samples.eq('10')],
-                                ['shmem_micro_seqs_1'], 'Sequential Scan Microbenchmarks'),
+                                ['shmem_micro_seqs_1'], 'Sequential Scan Microbenchmarks',
+                                iovol=True,),
             # compare sample sizes:
             *plot_figures_shmem(df[df.branch.isin(['pbm2'])],
-                                ['shmem_micro_seqs_1'], 'Sequential Scans - Impact of Sample Size'),
+                                ['shmem_micro_seqs_1'], 'Sequential Scans - Impact of Sample Size',
+                                iovol=True,),
         ]
 
+    # HDD sequential experiments:
     if include_seq_hdd:
-        plots += [
-            # HDD sequential experiments:
-            *plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1']) | df.pbm_evict_num_samples.eq('10')],
-                                      ['parallelism_micro_seqscans_hdd_1'], 'HDD Sequential Scan Microbenchmarks',
-                                      iolat=True, iorate=True),
-            # RAM sequential experiments:
-            *plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1']) | df.pbm_evict_num_samples.eq('10')],
-                                      ['parallelism_micro_seqscans_ram_1'], 'RAM Sequential Scan Microbenchmarks',),
+        plots += plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1']) | df.pbm_evict_num_samples.eq('10')],
+                                          ['parallelism_micro_seqscans_hdd_1'], 'HDD Sequential Scan Microbenchmarks',
+                                          iolat=True, iorate=True, iovol=True,)
 
-        ]
+    # RAM sequential experiments:
+    if include_seq_ram:
+        plots += plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1']) | df.pbm_evict_num_samples.eq('10')],
+                                          ['parallelism_micro_seqscans_ram_1'], 'RAM Sequential Scan Microbenchmarks',
+                                          iovol=True,)
 
     if include_tpch:
+        plots += plot_figures_parallelism(df, ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True,)
+
+    if include_idx_trailing:
         plots += [
-            *plot_figures_parallelism(df,
-                                      ['tpch_3'], 'TPCH',
-                                      iolat=True, iorate=True),
+            ### trailing index scan microbenchmarks - final results
+            *plot_figures_parallelism(df, ['micro_idx_parallelism_baseline_1'], 'Trailing index scans 1pct',
+                                      separate_hitrate=False, iorate=False, iolat=False, iovol=True),
+            # *plot_figures_parallelism(df, ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_pbm4_1'], 'Trailing index scans 1pct', separate_hitrate=False, iorate=False, iolat=False),
+            *plot_figures_parallelism(df, ['micro_idx_parallelism_pbm4_2_idx', 'micro_idx_parallelism_pbm4_2_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_no_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_freq+lru_nr', 'micro_idx_parallelism_pbm4_2_all'],
+                                      'Trailing index scans 1pct EXTRA', separate_hitrate=False, iorate=False, iolat=False, iovol=True),
+            # ^ RESULTS: no_idx+lru_nr is good. Conclusions: frequency is good, idx support does nothing, lru_nr doesn't help without frequency stats...
+
+            *plot_figures_parallelism(df, ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_high_baseline_1', 'micro_idx_parallelism_pbm4_2_idx', 'micro_idx_parallelism_high_pbm4_2_idx'], 'Trailing index MORE EXTRAS',
+                                      separate_hitrate=False, iorate=False, iolat=False, iovol=False),
+            # ^ going to higher parallelism, index doesn't actually seem to help unfortunately
+
         ]
 
+    if include_idx_sequential:
+        plots += [
+            ### sequential index scan microbenchmarks - final results
+            *plot_figures_parallelism(df, ['parallelism_ssd_btree_1'], 'Sequential index scans',
+                                      separate_hitrate=False, iorate=False, iolat=False, iovol=True,
+                                      time_ybound=(0, 60), hitrate_ybound=(0.9, 1.0)),
+            # *plot_figures_parallelism(df, ['parallelism_ssd_btree_1', 'parallelism_ssd_btree_pbm4_2'], 'Sequential index scans', separate_hitrate=False, iorate=False, iolat=False,
+            #                           time_ybound=(0, 100), hitrate_ybound=(0.9, 1.0)),
+            *plot_figures_parallelism(df, ['parallelism_ssd_btree_pbm4_3_idx', 'parallelism_ssd_btree_pbm4_3_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_no_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_freq+lru_nr', 'parallelism_ssd_btree_pbm4_3_all'],
+                                      'Sequential index scans EXTRAS', separate_hitrate=False, iorate=False, iolat=False, iovol=True,
+                                      time_ybound=(0, 60), hitrate_ybound=(0.9, 1.0)),
+            # TODO NOTE!: the above 'micro_idx_parallelism_pbm4_1' and 'parallelism_ssd_btree_pbm4_2' do NOT have nr_lru enabled, auto-generated legend is not correct.
+
+        ]
 
     # TODO testing...
     # plots += [
@@ -611,16 +652,6 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
 
 
 
-    ### trailing index scan microbenchmarks - final results
-    # *plot_figures_parallelism(df, ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_pbm4_1'], 'Trailing index scans 1%', separate_hitrate=False, iorate=False, iolat=False),
-    # *plot_figures_parallelism(df, ['micro_idx_parallelism_pbm4_2_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_no_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_freq+lru_nr'], 'Trailing index scans 1% EXTRA', separate_hitrate=False, iorate=False, iolat=False),
-    # ^ RESULTS: no_idx+lru_nr is good. Conclusions: frequency is good, idx support does nothing, lru_nr doesn't help without frequency stats...
-
-    ### sequential index scan microbenchmarks - final results
-    # *plot_figures_parallelism(df, ['parallelism_ssd_btree_1', 'parallelism_ssd_btree_pbm4_2'], 'Sequential index scans', separate_hitrate=False, iorate=False, iolat=False, time_ybound=(0, 100)),
-    # *plot_figures_parallelism(df, ['parallelism_ssd_btree_pbm4_3_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_no_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_freq+lru_nr'],
-    #                           'Sequential index scans EXTRAS', separate_hitrate=False, iorate=False, iolat=False, time_ybound=(0, 100)),
-    # TODO NOTE!: the above 'micro_idx_parallelism_pbm4_1' and 'parallelism_ssd_btree_pbm4_2' do NOT have nr_lru enabled, aut-generated legend is not correct.
 
 
     return df, plots
@@ -709,7 +740,17 @@ if __name__ == '__main__':
     df['idx_total'] = df.lineitem_idx_blks_hit + df.lineitem_idx_blks_read
     df['pct_idx'] = 100 * df.idx_total / (df.idx_total + df.heap_total)
 
-    x = df[df.experiment.eq('tpch_3') & df.branch.eq('pbm3') & df.parallelism.eq(32)]
+    # track down TPCH weird outlier...
+    # x = df[df.experiment.eq('tpch_3') & df.branch.eq('pbm3') & df.parallelism.eq(32)]
+
+    # track down seq-idx weird outlier...
+    x = df[df.experiment.eq('parallelism_ssd_btree_pbm4_3_idx+lru_nr') & df.parallelism.eq(24) & (df.hit_rate < 0.98)]
+    # TPCH_2023-06-13_15-45    | seed=22289, parallelism=24
+    y = df[df.experiment.eq('parallelism_ssd_btree_pbm4_3_idx+lru_nr') & df.parallelism.eq(24) & df.seed.eq(22289)]
+
+    #
+    # plot_figures_parallelism(df, ['parallelism_ssd_btree_pbm4_3_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_no_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_freq+lru_nr'],
+    #                           'Sequential index scans EXTRAS', separate_hitrate=False, iorate=False, iolat=False, time_ybound=(0, 100))
 
 # (Manual) Post-processing of the final graphs included in the paper:
 #  - comment-out titles, use captions instead

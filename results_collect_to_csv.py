@@ -156,6 +156,7 @@ def collect_results_to_csv(res_dir: Path, csv_out: Path):
     # Folders to ignore results from, usually because something went wrong during the test (e.g. network issues...) but the test still completed
     ignore_dirs = {
         'TPCH_2023-06-19_10-16-21',  # strangely completed in half the expected time, but without errors... no cgroup maybe?
+        'TPCH_2023-06-13_15-45',  # weirdly low hit-rate compared to other results with the same code... no idea why
     }
 
     # Process everythign in the results directory
