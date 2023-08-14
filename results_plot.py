@@ -257,6 +257,7 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
             plotfn(df_plot[x], df_plot[y], label=glabel)
 
     ax.minorticks_off()
+    # ax.xaxis.get_major_locator().set_params(min_n_ticks=5)
     ax.ticklabel_format(useOffset=False)
     if ybound is not None:
         ax.set_ybound(*ybound)
@@ -370,7 +371,7 @@ def parallelism_grp_sort_key(x: (Iterable[str], Any)):
 
     # extract group columns
     brnch, samples, victims, freq, idx, nrlru = g[0:6]
-    
+
     # sort by: branch first, then bulk eviction, # samples (decreasing), other columns are there to get a consistent order but we don't actually care
     return (brnch.lower(), int(victims or '1'), -int(samples or '0'), freq, idx, nrlru)
 
@@ -439,7 +440,7 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
 
 def plot_figures_shmem(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
                        hitrate=True, runtime=True, data_processed=False, iorate=False, iolat=False, iovol=False,
-                       separate_hitrate=False, time_ybound=None, hitrate_ybound=None,
+                       separate_hitrate=False, time_ybound=None, hitrate_ybound=(0, 1),
                        extra_grp_cols=None, grp_name=default_fmt_branch, avg_y_values=True):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
     group_cols = [
@@ -546,12 +547,40 @@ def create_out_dir() -> Path:
 
 
 def save_plots_as_latex(plots: List[plt.Axes]):
+    """Convert matplotlib figures to tikz code"""
+
     fig_dir = create_out_dir()
     print(f'Saving plots to {fig_dir}')
+    reflags = re.MULTILINE
 
     for ax in plots:
+        # generate tikz code, then fix it up...
         tikzplotlib_fix_ncols(ax.figure)
-        tikzplotlib.save(fig_dir / (ax.title.get_text() + '.tikz'), figure=ax.figure, externalize_tables=False)
+        tikz_code = tikzplotlib.get_tikz_code(figure=ax.figure, externalize_tables=False)
+
+        # comment out title
+        tikz_code = re.sub(r'^(\s*title=)', r'%\1', tikz_code, count=1, flags=reflags)
+
+        # xtick:
+        m = re.search(r'^(\s*)xtick={(.*)},', tikz_code, flags=reflags)
+        if not m:
+            # if xtick not specified, this should be a parallelism test.
+            # set xtick=data, and set xticklabels to leave out 1 to avoid crowding the axis
+            tikz_code = re.sub(r'xlabel={(.*)},', r'xlabel={\1},\nxtick=data,\nxticklabels={,2,4,6,8,12,16,24,32},', tikz_code, flags=reflags)
+        else:
+            # for cache-size experiments: remove some xtick labels to reduce crowding
+            tikz_code = tikz_code.replace('xticklabels={256MB,512MB,1GB,2GB,3GB,4GB,5GB,6GB,7GB,8GB}', 'xticklabels={,,1GB,2GB,3GB,4GB,5GB,6GB,7GB,8GB}', 1)
+
+        # try to get better y-axis ticks from pgfplots
+        tikz_code = re.sub(r'(\begin{axis}[)', r'\1\ntry min ticks=10,', tikz_code, count=1,)
+        # if this doesn't work well, also try setting: `max space between ticks` (which appears to be # of pixels, so e.g. 20 might work)
+
+
+# TODO other edits here!
+
+        # save it
+        with open(fig_dir / (ax.title.get_text() + '.tikz'), 'w') as f:
+            f.write(tikz_code)
 
 
 def main(df: pd.DataFrame, df_old: pd.DataFrame):
@@ -583,11 +612,11 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
         # *plot_figures_parallelism(df_old, ['parallelism_ssd_btree_1'], 'idx + btree', separate_hitrate=False, iorate=False, iolat=False),
     ]
 
-    include_seq_parallel = False
+    include_seq_parallel = True
     include_seq_mem = False
     include_seq_hdd = False
     include_seq_ram = False
-    include_tpch = True
+    include_tpch = False
     include_tpch_brin = False
     include_idx_trailing = False
     include_idx_sequential = False
@@ -606,7 +635,8 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
             # bulk-eviction:
             *plot_figures_parallelism(df[df.branch.isin(['pbm2']) & df.pbm_evict_num_samples.isin(['10', '20', '100'])],
                                       ['parallelism_micro_seqscans_1'], 'Sequential Scans - Impact of Bulk Eviction',
-                                      iovol=True),
+                                      hitrate_ybound=(0.45, 0.71),
+                                      iovol=True,),
         ]
 
     ### sequential/bitmap scan microbenchmarks - memory - final results
@@ -637,7 +667,7 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
     if include_tpch:
         # plots += plot_figures_parallelism(df, ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True,)
         plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=False, iorate=False, iovol=True,)
-        # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['10', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=False, iorate=False, iovol=True,)
+        # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['10', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH (10)', iolat=False, iorate=False, iovol=True,)
 
 
     if include_tpch_brin:
@@ -775,13 +805,7 @@ if __name__ == '__main__':
 
 
 # (Manual) Post-processing of the final graphs included in the paper:
-#  - Comment-out titles, use captions instead
-#  - Set ymin, ymax if appropriate
+# (managed to get most of the changes to be automatic in `save_plots_as_latex`)
+#  - Set ymin, ymax if appropriate (maybe add the limits in code if it makes sense)
 #  - Change legend position if it isn't placed well (especially after adjusting the bounds)
-#  - Parallelism graphs: add `xtick=data,` for the axis labels
-#  - Parallelism graphs: maybe remove the x=1 label?
-#  - Cache size: replace `xticklabels={,,1GB,2GB,3GB,4GB,5GB,6GB,7GB,8GB},` (remove label for <1GB) to prevent labels from overlapping
-#  - for experiments with different sample sizes: re-order stuff to have the sample sizes sorted
-#  - for plots with bulk eviction: `#` character needs to be changed
-
-
+#  - Maybe comment out data for series that we don't want to show
