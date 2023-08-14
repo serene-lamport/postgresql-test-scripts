@@ -3,7 +3,7 @@ import sys
 import os
 
 import pandas as pd
-from typing import Union, Iterable, Optional, Sequence, Callable, List
+from typing import Union, Iterable, Optional, Sequence, Callable, List, Any
 from collections import OrderedDict
 from pathlib import Path
 from datetime import datetime as dt
@@ -13,6 +13,7 @@ import matplotlib
 from matplotlib.ticker import FixedLocator, FixedFormatter
 import seaborn.objects as so
 import tikzplotlib
+import re
 
 from lib.config import *
 
@@ -57,6 +58,8 @@ def mk_list(x):
     """wrap argument in a list if it isn't one already"""
     if isinstance(x, list):
         return x
+    elif isinstance(x, Iterable):
+        return list(x)
     else:
         return [x]
 
@@ -79,14 +82,15 @@ def format_brnch_ns(to_fmt: Iterable[str]) -> str:
     samples = str(to_fmt[1])
     if brnch == 'pbm2' and samples == '1':
         return 'Random'
+    if brnch == 'pbm3':
+        return f'PBM-sampling ({samples}) + freq'
 
     mapping = {
         'base': 'Clock-sweep',
         'pbm1': 'PBM-PQ',
         'pbm2': 'PBM-sampling',
-        'pbm3': 'sampling + freq',  # TODO what to call the later ones?
-        'pbm4': 'sampling + idx'
-        # TODO other branches?
+        'pbm3': 'PBM-sampling + freq',
+        'pbm4': 'PBM-sampling + idx',
     }
 
     if brnch in mapping and samples != '':
@@ -97,17 +101,21 @@ def format_brnch_ns(to_fmt: Iterable[str]) -> str:
         return format_str_or_iterable(to_fmt)
 
 
+fmt_bulk_regex = re.compile('\((\d*)\)')
 def format_branch_ns_nv(to_fmt: Iterable[str]) -> str:
     """
     Renamme PBM branches for the graphs.
     Based on (branch, num_samples, num_victims)
     """
     to_fmt = list(to_fmt)
+    samples = to_fmt[1]
+    victims = to_fmt[2]
 
     base_fmt = format_brnch_ns(to_fmt)
 
+    # bulk eviction: replace `(# samples)` with `(bulk: # victims/# samples)`
     if to_fmt[0] in ['pbm2', 'pbm3'] and to_fmt[2] not in ['', '1']:
-        return f'{base_fmt}, # evicted={to_fmt[2]}'
+        return base_fmt.replace(to_fmt[1], f'bulk: {victims}/{samples}')
     else:
         return base_fmt
 
@@ -124,11 +132,6 @@ def format_branch_ns_nv_inc(to_fmt: Iterable[str]) -> str:
         return f'{base_fmt}, idx_counts={to_fmt[3]}'
     else:
         return base_fmt
-
-
-
-        # 'branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', # 'pbm_idx_scan_num_counts',
-        # 'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_lru_if_not_requested',
 
 
 def to_bool(val: str, default: bool) -> bool:
@@ -158,17 +161,20 @@ def default_fmt_branch(to_fmt: Iterable[str]) -> str:
     use_idx = to_bool(to_fmt[4], True)
     use_nr_lru = to_bool(to_fmt[5], True)
 
+    ret = base_fmt
     if brnch == 'pbm4':
-        ret = f'sampling ({samples})'
+        ret = f'PBM-sampling ({samples})'
+        features = []
         if use_freq:
-            ret += ' + freq'
+            features.append('freq')
         if use_idx:
-            ret += ' + idx'
+            features.append('idx')
         if use_nr_lru:
-            ret += ' + nrlru'
-        return ret
-    else:
-        return base_fmt
+            features.append('nrlru')
+        if len(features) > 0:
+            ret += ' + ' + ', '.join(features)
+
+    return ret
 
 
 def average_series(df: pd.DataFrame, /, x, y, other_cols=None):
@@ -199,6 +205,7 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
              y, ylabel=None, ybound=None, avg_y_values=True,
              group: Union[str, Iterable[str]] = ('branch', 'pbm_evict_num_samples'),
              grp_name: Callable[[Iterable[str]], str] = format_str_or_iterable,
+             grp_sort: Callable[[Iterable[str]], Any] = None,
              title=None, legend_title=None):
     """Plot an experiment."""
     df_exp = df[df['experiment'].isin(mk_list(exp))]
@@ -209,8 +216,15 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
     if type(group) is not str:
         group = list(group)
 
+    # group the data. sort the groups and convert groups to labels for the legend
+    grps_plots = list(df_exp.groupby(group))
+    if grp_sort is not None:
+        grps_plots.sort(key=grp_sort)
+    grps_plots = [(grp_name(g), p) for g, p in grps_plots]
+
+    # graph each 'group' as a separate line
     df_plot = None
-    for grp, df_plot in df_exp.groupby(group):
+    for glabel, df_plot in grps_plots:
         # sort x values if requested
         if type(xsort) == bool and xsort:
             xsort = x
@@ -233,15 +247,14 @@ def plot_exp(df: pd.DataFrame, exp: str, *, ax: Optional[plt.Axes] = None,
         # actually plot the current group
         err_bars = avg_y_values
         if err_bars:
-            lbl = grp_name(grp)
             ebar = ax.errorbar(df_plot[x], df_plot[y], yerr=df_plot['err'], capsize=3)
             # workaround for tikzplotlib: https://github.com/nschloe/tikzplotlib/issues/218#issuecomment-854912145
             # set the labels *after* plotting the series to prevent the error bars themselves being labelled too
-            ebar[0].set_label(lbl)
+            ebar[0].set_label(glabel)
             if logx:
                 ax.set_xscale('log')
         else:
-            plotfn(df_plot[x], df_plot[y], label=grp_name(grp))
+            plotfn(df_plot[x], df_plot[y], label=glabel)
 
     ax.minorticks_off()
     ax.ticklabel_format(useOffset=False)
@@ -350,19 +363,31 @@ def post_process_data(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def parallelism_grp_sort_key(x: (Iterable[str], Any)):
+    # input is tuple (group list, plot)
+    g, _ = x
+    g = mk_list(g)
+
+    # extract group columns
+    brnch, samples, victims, freq, idx, nrlru = g[0:6]
+    
+    # sort by: branch first, then bulk eviction, # samples (decreasing), other columns are there to get a consistent order but we don't actually care
+    return (brnch.lower(), int(victims or '1'), -int(samples or '0'), freq, idx, nrlru)
+
+
 def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
                              hitrate=True, runtime=True, data_processed=False, iorate=False, iolat=False, iovol=False,
-                             separate_hitrate=False, time_ybound=None, hitrate_ybound=None,
+                             separate_hitrate=False, time_ybound=(0, None), hitrate_ybound=None,
                              extra_grp_cols=None, grp_name=default_fmt_branch, avg_y_values=True):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
     group_cols = [
-        'branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', # 'pbm_idx_scan_num_counts',
+        'branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims',
         'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_lru_if_not_requested',
         *(extra_grp_cols or []),
     ]
     parallelism_common_args = {
         'x': 'parallelism', 'xsort': True, 'xlabel': 'Parallelism', 'xlabels': 'parallelism',
-        'group': group_cols, 'grp_name': grp_name, 'legend_title': 'Policy',
+        'group': group_cols, 'grp_name': grp_name, 'grp_sort': parallelism_grp_sort_key, 'legend_title': 'Policy',
         'avg_y_values': avg_y_values,
     }
     ret_list = []
@@ -390,21 +415,21 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
     ] if data_processed else []
 
     ret_list += [
-        plot_exp(df, exp, y='data_read_gb', ylabel='I/O volume (GB)',
+        plot_exp(df, exp, y='data_read_gb', ylabel='I/O volume (GB)', ybound=(0, None),
                  title=f'IO volume vs parallelism - {subtitle}', **parallelism_common_args),
     ] if iovol else []
 
     ret_list += [
-        plot_exp(df, exp, y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
+        plot_exp(df, exp, y='pg_mb_per_s', ylabel='IO throughput (MiB/s)', ybound=(0, None),
                  title=f'Postgres IO rate vs parallelism - {subtitle}', **parallelism_common_args),
-        plot_exp(df, exp, y='hw_mb_per_s', ylabel='IO throughput (MiB/s)',
+        plot_exp(df, exp, y='hw_mb_per_s', ylabel='IO throughput (MiB/s)', ybound=(0, None),
                  title=f'Hardware IO rate vs parallelism - {subtitle}', **parallelism_common_args),
     ] if iorate else []
 
     ret_list += [
-        plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)',
+        plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)', ybound=(0, None),
                  title=f'Postgres IO latency vs parallelism - {subtitle}', **parallelism_common_args),
-        plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)',
+        plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)', ybound=(0, None),
                  title=f'Hardware IO latency vs parallelism - {subtitle}', **parallelism_common_args),
     ] if iolat else []
 
@@ -418,56 +443,56 @@ def plot_figures_shmem(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
                        extra_grp_cols=None, grp_name=default_fmt_branch, avg_y_values=True):
     """Generates all the interesting plots for a TPCH parallelism experiment"""
     group_cols = [
-        'branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims', # 'pbm_idx_scan_num_counts',
+        'branch', 'pbm_evict_num_samples', 'pbm_evict_num_victims',
         'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_lru_if_not_requested',
         *(extra_grp_cols or []),
     ]
-    parallelism_common_args = {
-        'x': 'shmem_mb', 'xsort': True, 'xlabel': 'Cache size', 'xlabels': 'shared_buffers',
-        'group': group_cols, 'grp_name': grp_name, 'legend_title': 'Policy',
+    shmem_common_args = {
+        'x': 'shmem_mb', 'xsort': True, 'xlabel': 'Cache size (GiB)', 'xlabels': 'shared_buffers',
+        'group': group_cols, 'grp_name': grp_name, 'grp_sort': parallelism_grp_sort_key, 'legend_title': 'Policy',
         'avg_y_values': avg_y_values,
     }
     ret_list = []
 
     ret_list += [
         plot_exp(df, exp, y='hit_rate', ylabel='Hit rate', ybound=hitrate_ybound,
-                 title=f'Hit rate vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Hit rate vs cache size - {subtitle}', **shmem_common_args),
     ] if hitrate else []
 
     ret_list += [
         plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap hit rate', ybound=hitrate_ybound,
-                 title=f'Heap hit rate vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Heap hit rate vs cache size - {subtitle}', **shmem_common_args),
         plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index hit rate', ybound=hitrate_ybound,
-                 title=f'Index hit rate vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Index hit rate vs cache size - {subtitle}', **shmem_common_args),
     ] if separate_hitrate else []
 
     ret_list += [
         plot_exp(df, exp, y='minutes_total', ylabel='Time (min)', ybound=time_ybound,
-                 title=f'Time vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Time vs cache size - {subtitle}', **shmem_common_args),
     ] if runtime else []
 
     ret_list += [
         plot_exp(df, exp, y='data_processed_per_stream', ylabel='data_processed',
-                 title=f'data processed vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'data processed vs cache size - {subtitle}', **shmem_common_args),
     ] if data_processed else []
 
     ret_list += [
         plot_exp(df, exp, y='data_read_gb', ylabel='I/O volume (GB)',
-                 title=f'IO volume vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'IO volume vs cache size - {subtitle}', **shmem_common_args),
     ] if iovol else []
 
     ret_list += [
         plot_exp(df, exp, y='pg_mb_per_s', ylabel='IO throughput (MiB/s)',
-                 title=f'Postgres IO rate vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Postgres IO rate vs cache size - {subtitle}', **shmem_common_args),
         plot_exp(df, exp, y='hw_mb_per_s', ylabel='IO throughput (MiB/s)',
-                 title=f'Hardware IO rate vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Hardware IO rate vs cache size - {subtitle}', **shmem_common_args),
     ] if iorate else []
 
     ret_list += [
         plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)',
-                 title=f'Postgres IO latency vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Postgres IO latency vs cache size - {subtitle}', **shmem_common_args),
         plot_exp(df, exp, y='pg_iolat', ylabel='IO latency (s/GiB)',
-                 title=f'Hardware IO latency vs cache size - {subtitle}', **parallelism_common_args),
+                 title=f'Hardware IO latency vs cache size - {subtitle}', **shmem_common_args),
     ] if iolat else []
 
     return ret_list
@@ -526,7 +551,7 @@ def save_plots_as_latex(plots: List[plt.Axes]):
 
     for ax in plots:
         tikzplotlib_fix_ncols(ax.figure)
-        tikzplotlib.save(fig_dir / (ax.title.get_text() + '.tex'), figure=ax.figure, externalize_tables=False)
+        tikzplotlib.save(fig_dir / (ax.title.get_text() + '.tikz'), figure=ax.figure, externalize_tables=False)
 
 
 def main(df: pd.DataFrame, df_old: pd.DataFrame):
@@ -562,7 +587,8 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
     include_seq_mem = False
     include_seq_hdd = False
     include_seq_ram = False
-    include_tpch = False
+    include_tpch = True
+    include_tpch_brin = False
     include_idx_trailing = False
     include_idx_sequential = False
 
@@ -609,7 +635,13 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
                                           iovol=True,)
 
     if include_tpch:
-        plots += plot_figures_parallelism(df, ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True,)
+        # plots += plot_figures_parallelism(df, ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True,)
+        plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=False, iorate=False, iovol=True,)
+        # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['10', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=False, iorate=False, iovol=True,)
+
+
+    if include_tpch_brin:
+        plots += plot_figures_parallelism(df, ['tpch_brin_3',], 'TPCH BRIN only', iolat=True, iorate=True, iovol=True)
 
     if include_idx_trailing:
         plots += [
@@ -726,36 +758,29 @@ if __name__ == '__main__':
         # calculated:
         'pg_iolat', 'hw_iolat', 'pg_disk_wait', 'hw_disk_wait',
     ]]
-    g = df_g.groupby(group_cols)
-    res = g.mean()
-    res['min_t_ci'] = g['minutes_total'].sem() * 1.96
-    res['min_s_ci'] = g['minutes_stream'].sem() * 1.96
-    res['hit_rate_ci'] = g['hit_rate'].sem() * 1.96
+    # g = df_g.groupby(group_cols)
+    # res = g.mean()
+    # res['min_t_ci'] = g['minutes_total'].sem() * 1.96
+    # res['min_s_ci'] = g['minutes_stream'].sem() * 1.96
+    # res['hit_rate_ci'] = g['hit_rate'].sem() * 1.96
 
-    cg = df[df.experiment == 'test_cgroup']
+    # cg = df[df.experiment == 'test_cgroup']
 
-    iostat_cols = ['pg_iolat', 'hw_iolat', 'pg_disk_wait', 'hw_disk_wait']
+    # iostat_cols = ['pg_iolat', 'hw_iolat', 'pg_disk_wait', 'hw_disk_wait']
 
-    df['heap_total'] = df.lineitem_heap_blks_hit + df.lineitem_heap_blks_read
-    df['idx_total'] = df.lineitem_idx_blks_hit + df.lineitem_idx_blks_read
-    df['pct_idx'] = 100 * df.idx_total / (df.idx_total + df.heap_total)
+    # df['heap_total'] = df.lineitem_heap_blks_hit + df.lineitem_heap_blks_read
+    # df['idx_total'] = df.lineitem_idx_blks_hit + df.lineitem_idx_blks_read
+    # df['pct_idx'] = 100 * df.idx_total / (df.idx_total + df.heap_total)
 
-    # track down TPCH weird outlier...
-    # x = df[df.experiment.eq('tpch_3') & df.branch.eq('pbm3') & df.parallelism.eq(32)]
 
-    # track down seq-idx weird outlier...
-    x = df[df.experiment.eq('parallelism_ssd_btree_pbm4_3_idx+lru_nr') & df.parallelism.eq(24) & (df.hit_rate < 0.98)]
-    # TPCH_2023-06-13_15-45    | seed=22289, parallelism=24
-    y = df[df.experiment.eq('parallelism_ssd_btree_pbm4_3_idx+lru_nr') & df.parallelism.eq(24) & df.seed.eq(22289)]
-
-    #
-    # plot_figures_parallelism(df, ['parallelism_ssd_btree_pbm4_3_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_no_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_freq+lru_nr'],
-    #                           'Sequential index scans EXTRAS', separate_hitrate=False, iorate=False, iolat=False, time_ybound=(0, 100))
 
 # (Manual) Post-processing of the final graphs included in the paper:
-#  - comment-out titles, use captions instead
-#  - add `xtick=data,` to *parallelism* graphs (shared memory have sparate labels)
-#  - replace `xticklabels={,,1GB,2GB,3GB,4GB,5GB,6GB,7GB,8GB},` (remove label for <1GB) to prevent labels from overlapping
+#  - Comment-out titles, use captions instead
+#  - Set ymin, ymax if appropriate
+#  - Change legend position if it isn't placed well (especially after adjusting the bounds)
+#  - Parallelism graphs: add `xtick=data,` for the axis labels
+#  - Parallelism graphs: maybe remove the x=1 label?
+#  - Cache size: replace `xticklabels={,,1GB,2GB,3GB,4GB,5GB,6GB,7GB,8GB},` (remove label for <1GB) to prevent labels from overlapping
 #  - for experiments with different sample sizes: re-order stuff to have the sample sizes sorted
 #  - for plots with bulk eviction: `#` character needs to be changed
 

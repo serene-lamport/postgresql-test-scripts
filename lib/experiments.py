@@ -1356,7 +1356,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     # print(f'==   Block group size       {dbconf.bg_size} KiB')
     # print(f'==   Workload:              {bbconf.workload.workname}')
     # print(f'==   Worker memory          {PG_WORK_MEM}')
-    print(f'==   Shared memory:         {pgconf.shared_buffers}')
+    print(f'==   Shared memory:         {pgconf.shared_buffers}   ({exp_config.cgroup.mem_gb} GB cgroup)')
     if is_tpch:
         print(f'==   Index definitions:     ddl/index/{dbsetup.indexes}/')
         print(f'==   Clustering:            ddl/cluster/{dbsetup.clustering}.sql')

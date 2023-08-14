@@ -478,31 +478,69 @@ def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], d
 def test_tpch():
     common_args = {
         # **SSD_HOST_ARGS,
-        'nsamples': [1, 10],
+        'nsamples': [10],  #[1, 10],  # 20?   # 1 run for seeds 0:4 only
         'cgmem_gb': 4.0,  # 1.5GB seems necessary for worker memory + whatever else
-        # 'shmem': '2355MB',  # 2.3 GB
         'shmem': '2560MB',
-
-        # 'parallel_ops': [32, 24, 1, 2, 4, 6, 8, 12, 16, ],
-        # 'parallel_ops': [1, 2, 4, 6, 8, 12, 16, ],
     }
 
     # run TPCH tests for main branches
-    run_tests('tpch_3', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-    run_tests('tpch_3', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[24], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-    run_tests('tpch_3', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[24], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
     # tpch_2 was with 2.3 GiB shared buffers, 3.5 cgroup... ran once just fine, then failed on second seed
 
     # TODO PBM4???
-    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
                                             pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
-    run_tests('tpch_pbm4_1_idx+nrlru', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
-                                               pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+    # run_tests('tpch_pbm4_1_idx+nrlru', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+    #                                            pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
 
     # TODO with only BRIN indexes?
 
+    # TODO trying with higher sample size, how much does that help?
+    common_args['nsamples'] = [20]
+    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, ],)) 
+    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                            pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+    
+
     # TODO directory TPCH_2023-06-19_10-16-21 has weird results: = pbm3, seed=16312, parallelism=32
     # run_tests('tpch_3', run_test_tpch([rand_seeds[0]], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3,],))
+
+
+def test_tpch_brinonly():
+    common_args = {
+        'nsamples': [1, 10],
+
+
+        'cgmem_gb': 5.0,  # had an error at 4.0
+        'shmem': '2560MB',
+
+
+        # 'cgmem_gb': 4.0,
+        # 'shmem': '2048MB',
+
+        # different indexes
+        'indexes': 'brin',  # only BRIN indexes, no btree
+        # consider also: only BRIN except partsupp?
+    }
+
+    # see how long it takes for a single run through the 16 queries
+    # run_tests('tpch_brin_test', run_test_tpch(rand_seeds[0:1], **common_args, branches=[BRANCH_POSTGRES_BASE]), )
+
+    # main branches
+    branches1=[BRANCH_PBM2, BRANCH_PBM3, BRANCH_POSTGRES_BASE, BRANCH_PBM1]
+    run_tests('tpch_brin_3', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32], branches=branches1,))
+    run_tests('tpch_brin_3', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[1, 2, 4, 6, 8, 12, 16], branches=branches1,))
+    run_tests('tpch_brin_3', run_test_tpch(rand_seeds[0:3], **common_args, parallel_ops=[24], branches=branches1,))
+
+
+    # pbm4: need this at all? should be no indexes!
+    run_tests('tpch_brin_pbm4_1_all', run_test_tpch(rand_seeds[0:0], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                            pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+    run_tests('tpch_brin_pbm4_1_idx+nrlru', run_test_tpch(rand_seeds[0:0], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                            pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+
 
 
 def test_micro_seq_shmem():
@@ -552,7 +590,7 @@ def test_micro_seqscans(ssd=True):
 
         # Try PBM-sampling with different #s of samples
         run_tests('parallelism_micro_seqscans_1',
-                  test_micro_parallelism(rand_seeds[5:5], **common_args, **SSD_HOST_ARGS, nsamples=[5, 20],
+                  test_micro_parallelism(rand_seeds[5:5], **common_args, **SSD_HOST_ARGS, nsamples=[2, 5, 20],
                                          branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
 
         # Try PBM-sampling with multi-eviction
@@ -707,6 +745,7 @@ if __name__ == '__main__':
         "micro_seq_idx": test_micro_seq_index_scans,
         "micro_trailing_idx": test_micro_trailing_idx,
         "tpch": test_tpch,
+        "tpch_brinonly": test_tpch_brinonly,
     }
 
     if len(sys.argv) <= 1:

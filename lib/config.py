@@ -5,9 +5,10 @@ Some of these should be modified to reproduce the tests on a different set of ma
 are constants that should be left alone.
 """
 
-import pathlib
+from pathlib import Path
 import dataclasses
 import typing
+import os
 
 
 ###########################
@@ -19,27 +20,27 @@ import typing
 PG_HOST_TPCH: str = 'tem112'
 PG_HOST_TPCC: str = 'tem114'
 PG_PORT: str = '5432'
-PG_USER: str = 'ta3vande'
+PG_USER: str = os.environ['USER']
 PG_PASSWD: str = ''
 
 # Postgres data files (absolute path)
-PG_DEFAULT_DATA_ROOT = pathlib.Path('/hdd1/pgdata')
+PG_DEFAULT_DATA_ROOT = Path('/hdd1/pgdata')
 # this is the device on the host which has the given file path.
 PG_DATA_DEVICE: str = 'sdb/sdb1'
 # TODO replace /sys/block -> /sys/class/block, and make this just `sdb1` since the hierarchy is flat there
 
 # Some of the above args for running on the SSD host
 SSD_HOST_ARGS = {
-    'data_root': (pathlib.Path('/hdd2/pgdata'), 'sda/sda3'),
+    'data_root': (Path('/hdd2/pgdata'), 'sda/sda3'),
     'db_host': 'tem06'
 }
 HDD_HOST_ARGS_TPCH = {
-    'data_root': (pathlib.Path('/hdd1/pgdata'), 'sdb/sdb1'),
+    'data_root': (Path('/hdd1/pgdata'), 'sdb/sdb1'),
     'db_host': 'tem112'
 }
 
 # Where to clone/compile everything (absolute path)
-BUILD_ROOT = pathlib.Path('/home/ta3vande/PG_TESTS')
+BUILD_ROOT = Path(os.environ['HOME']) / 'PG_TESTS'
 
 
 #######################################
