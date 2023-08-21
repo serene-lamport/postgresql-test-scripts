@@ -69,7 +69,7 @@ def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, skip=0, dry_r
     s = elapsed.seconds % 60
     elapsed_str = f'{h}h {m}m {s}s'
     print_str = f'===     [{exp_name}] STARTED {start_t_str}, FINISHED {end_t_str}, TIME ELAPSED = {elapsed_str}     ==='
-    
+
     print('-'*len(print_str))
     print(print_str)
     print('-'*len(print_str))
@@ -484,28 +484,31 @@ def test_tpch():
     }
 
     # run TPCH tests for main branches
-    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[24], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-    # tpch_2 was with 2.3 GiB shared buffers, 3.5 cgroup... ran once just fine, then failed on second seed
+    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[24], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
 
-    # TODO PBM4???
-    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+    # run with index support
+    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
                                             pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
     # run_tests('tpch_pbm4_1_idx+nrlru', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
     #                                            pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
 
-    # TODO with only BRIN indexes?
-
-    # TODO trying with higher sample size, how much does that help?
+    # repeat with 20 samples
     common_args['nsamples'] = [20]
-    run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, ],)) 
-    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, ],))
+    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
                                             pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
-    
+    run_tests('tpch_pbm4_1_freq+nrlru', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                            pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
 
-    # TODO directory TPCH_2023-06-19_10-16-21 has weird results: = pbm3, seed=16312, parallelism=32
-    # run_tests('tpch_3', run_test_tpch([rand_seeds[0]], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3,],))
+    # TODO ^ PBM2 with 32 samples, seed=32495=rand_seeds[4] has weirdly lower runtime than the others?
+    # TODO ^ dir = TPCH_2023-08-16_10-46-45
+
+    # re-run the sketch result...
+    # run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32,], branches=[ BRANCH_PBM2, ],))
+    # dir = TPCH_2023-08-17_14-14-26  <<< TODO ADD THIS TO IGNORED OUTLIERS IF WE DON'T USE IT!
+
 
 
 def test_tpch_brinonly():
@@ -767,7 +770,3 @@ if __name__ == '__main__':
         print(f'>>>>> STARTING WORKLOAD = {main_workload} <<<<<')
         test_fn()
         print(f'>>>>> COMPLETED WORKLOAD = {main_workload} <<<<<')
-
-
-
-
