@@ -23,6 +23,7 @@ Python virtual environment
 4. Install python libraries once activated: `pip install -r requirements.txt`
 5. After adding a new package with `pip install` (with the environment activated), use `pip freeze > requirements.txt` to update the list
 
+
 Using the scripts
 -----------------
 
@@ -36,7 +37,7 @@ Using the scripts
 3. Make sure `BUILD_ROOT` and the various `data_root` paths exist on the relevant hosts.
 4. Run `sudo cgcreate -t $USER: -a $USER: -g memory:postgres_pbm` on the postgres host to create the cgroup used for testing. (a group can optionally be specified after `$USER:`) (this is already done by `first_time_setup.sh`)
 5. Run `./run_util.py pg_setup` on the postgres machine to clone, build, and install postgress on all configurations.
-6. Run `./run_util.py benchbase_setup` on both machines (or only one, if `BUILD_ROOT` is a shared network drive) to install benchbase.
+6. Run `./run_util.py benchbase_setup` on both machines (or only one, if `BUILD_ROOT` is a shared network drive) to install benchbase. For me BenchBase can't compile on the test machines, so if this fails you'll have to compile it manually (on a different machine) and copy the files over. See the section below for more details.
 7. Run `./run_util.py gen_test_data -sf <scalefactor>` on the postgres machine to load data through benchbase.
 8. See `./run_util.py --help` for other tasks. May need to check the code for exactly what each does.
 9. Configure desired experiments in `./run_experiments.py` and run it from the _test_ machine (not the postgres host) to run the benchmarks.
@@ -45,3 +46,13 @@ Using the scripts
     - This scripts will give you a python shell when it is done `Ctrl+D` or `exit()` to exit.
     - See comments at the bottom for more about how this file works
     - Specify `show` and/or `save` as command line args to show the plots and/or save them (as latex) to `BUILD_ROOT/figures`.
+
+
+Changing Benchbase
+------------------
+Due to the home directory on the test cluster being NFS (and possibly slightly misconfigured?), file locks don't work which prevent maven from working. Thus I compile BenchBase locally and copy the files separately, using `rebuild.sh` in the BenchBase repository. (Script may need to be adapted for your use)
+
+
+Changing Postgres
+-----------------
+If the changes are in a new branch, it will have to be added to `config.py`, experiments will need to be updated to use it, `./run_util.py pg_setup` is needed to build the new branches. Otherwise, `./run_util.py pg_update` (after pushing changes to git) will pull down new changes and recompile. If the incremental build breaks something (when `make` doesn't realise some file needs to be recompiled), use `pg_clean` to force a full recompile.
