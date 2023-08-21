@@ -629,25 +629,9 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
 
 
     print(f'Generating plots...')
+    plots = []
 
-    plots = [
-        # *plot_figures_parallelism(df, 'parallelism_cgroup_largeblks_ssd_2', 'SSD + 3GB cgroup'),  # SSD (11)
-        # *plot_figures_parallelism(df, 'parallelism_cgroup_smallblks_ssd_2', 'SSD + 3GB cgroup + small blocks'),  # SSD (11)
-        # *plot_figures_parallelism(df, 'parallelism_cgroup_sel50_2', '3GB cgroup 50% selectivity', time_ybound=(0, 80)),  # 12
-        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_3', 'HDD small block groups'),
-        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_largeblks_3', 'HDD large block groups'), (empty DF)
-        # one of the above failed at some point?
-        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_ssd_3', 'SSD small block groups'),
-        # *plot_figures_tpcc(df, 'tpcc_basic_parallelism_largeblks_ssd_3', 'SSD large block groups'),  # failed on second experiment (OOM?) (1 item in DF)
-        # *plot_figures_parallelism(df, ['parallelism_idx_ssd_5', 'parallelism_idx_ssd_pbm4_1'], 'index microbenchmarks', separate_hitrate=True),  # index scans (14)
-        # *plot_figures_parallelism(df, ['parallelism_idx_ssd__s2_r5_1', 'parallelism_idx_ssd_pbm4_s2_r5_1'], '2% index microbenchmarks',
-        #                           separate_hitrate=True, iorate=False, iolat=False),  # 2% index scans (not saved)
-
-        # *plot_figures_parallelism(df, ['parallelism_idx_ssd_no_whole_bg_1'], '2% index microbenchmarks', separate_hitrate=True, iorate=False, iolat=False),  # 1% w/o evict whole group (not saved) -- still no improvement!
-
-        # *plot_figures_parallelism(df_old, ['parallelism_ssd_btree_1'], 'idx + btree', separate_hitrate=False, iorate=False, iolat=False),
-    ]
-
+    # Set which graphs to generate
     include_seq_parallel = False
     include_seq_mem = False
     include_seq_hdd = False
@@ -882,10 +866,19 @@ if __name__ == '__main__':
     # compare_io_reduction(df_b, ['branch', 'parallelism'], ['data_read_gb', 'minutes_total'], compare_branch='pbm3')
 
 
+##########################
+### USING THIS SCRIPT  ###
+##########################
+# - Set the `include_*` variables in main(...) to control which plots are generated/saved
+# - New plots can also be added in main, see existing examples
+# - Specify `show` or `save` as command line args to display or save the figures, OR run `show_plots()`/`save_plots()` in the python shell.
+# - See the "MANUAL ANALYSIS" section above for other analysis (add or uncomment stuff as needed)
+# - There are some manual steps for some of the exported latex figures, see below
+
 
 # (Manual) Post-processing of the final graphs included in the paper:
-# (managed to get most of the changes to be automatic in `save_plots_as_latex`)
+# (managed to get most of the changes to be automatic in `save_plots_as_latex(...)`)
 #  - Set ymin, ymax if appropriate (runtime and io volume have ymin=0 by default already) (consider adding any changes to code)
-#  - Change legend position if it isn't placed well (legend stye {at, anchor}) (counldn't find an easy way to automate this)
+#  - Change legend position if it isn't placed well (legend stye {at, anchor}) (counldn't find an easy way to automate this, since each plot is separate so we have to rely on the automatic placement)
 #  - Comment out certain series to hide lines we don't want to show:
 #    - seq_micro {hardware/postgres} IO rate vs parallelism: remove the sampling+freq line

@@ -23,6 +23,7 @@ PG_PORT: str = '5432'
 PG_USER: str = os.environ['USER']
 PG_PASSWD: str = ''
 
+# TODO remove these?
 # Postgres data files (absolute path)
 PG_DEFAULT_DATA_ROOT = Path('/hdd1/pgdata')
 # this is the device on the host which has the given file path.
