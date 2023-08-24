@@ -154,8 +154,10 @@ def collect_results_to_csv(res_dir: Path, csv_out: Path):
     rows = []
 
     # Folders to ignore results from, usually because something went wrong during the test (e.g. network issues...) but the test still completed
+    # These experiments have been re-run separately
     ignore_dirs = {
         'TPCH_2023-06-19_10-16-21',  # strangely completed in half the expected time, but without errors... no cgroup maybe?
+        'TPCH_2023-06-19_11-02-50',  # ^ similar
         'TPCH_2023-06-13_15-45',  # weirdly low hit-rate compared to other results with the same code... no idea why
         'TPCH_2023-08-16_10-46-45',  # unexpectedly low runtime for the results, rerunning it seems to match the other results (replaced by TPCH_2023-08-17_14-14-26)
     }

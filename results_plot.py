@@ -609,7 +609,11 @@ def save_plots_as_latex(plots: List[plt.Axes]):
         # if this doesn't work well, also try setting: `max space between ticks` (which appears to be # of pixels, so e.g. 20 might work)
 
         # decrease size of error bar ticks
-        tikz_code = re.sub(r'mark size=\d+,', r'mark size=2,', tikz_code)
+        tikz_code = re.sub(r'mark size=\d+,', r'mark size=1.5,', tikz_code)
+
+        # make error bars thinner to obscure the rest of the graph less
+        tikz_code = tikz_code.replace(', semithick]', ', line width=0.3px]')
+        tikz_code = re.sub(r'\[semithick, (\w+\d+), mark=-', r'[line width=0.3px, \1, mark=-', tikz_code)
 
 
 # TODO other edits here!
@@ -621,13 +625,6 @@ def save_plots_as_latex(plots: List[plt.Axes]):
 
 def main(df: pd.DataFrame, df_old: pd.DataFrame):
     # Output results
-    print('================================================================================')
-    print('== Post-process interactive prompt:')
-    print('==   `df` contains a dataframe of the results')
-    print('==   `plt` is `matplotlib.pyplot`')
-    print('================================================================================')
-
-
     print(f'Generating plots...')
     plots = []
 
@@ -674,7 +671,9 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
 
     # HDD sequential experiments:
     if include_seq_hdd:
-        plots += plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1', 'pbm2']) & df.pbm_evict_num_samples.isin(['10', ''])],
+        # nsamples = ['10', '1', '']
+        nsamples = ['10', '']
+        plots += plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1', 'pbm2']) & df.pbm_evict_num_samples.isin(nsamples)],
                                           ['parallelism_micro_seqscans_hdd_1'], 'HDD Sequential Scan Microbenchmarks',
                                           omit_p1=False, iolat=True, iorate=True, iovol=True,)
 
@@ -686,9 +685,9 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
 
     # TODO remove random from the graphs?
     if include_tpch:
-        # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', '1', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True, random_first=True, hitrate_ybound=(0.675,0.849))
+        plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', '1', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True, random_first=True, hitrate_ybound=(0.675,0.849))
         # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['10', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH (10)', iolat=False, iorate=False, iovol=True,)
-        plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', '1', ''])], ['tpch_3', 'tpch_pbm4_1_all', 'tpch_pbm4_1_freq+nrlru'], 'TPCH', iolat=True, iorate=True, iovol=True, random_first=True, hitrate_ybound=(0.675,0.849))
+        # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', '1', ''])], ['tpch_3', 'tpch_pbm4_1_all', 'tpch_pbm4_1_freq+nrlru'], 'TPCH', iolat=True, iorate=True, iovol=True, random_first=True, hitrate_ybound=(0.675,0.849))
 
 
     if include_tpch_brin:
@@ -723,18 +722,6 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
                                       time_ybound=(0, 60), hitrate_ybound=(0.9, 1.0)),
         ]
 
-    # TODO testing...
-    # plots += [
-    #     *plot_figures_parallelism(#df,
-    #         df[df.branch.isin(['pbm2']) & df.pbm_evict_num_victims.isin(['', '1'])],
-    #                               #df[df.branch.isin(['base', 'pbm1']) | df.pbm_evict_num_samples.eq('10')],
-    #                               ['parallelism_micro_seqscans_1'], 'testing',),
-    # ]
-
-
-
-
-
     return df, plots
 
 
@@ -766,6 +753,12 @@ if __name__ == '__main__':
     df = post_process_data(df)
     df_old = post_process_data(df_old)
 
+    print('================================================================================')
+    print('== Post-process interactive prompt:')
+    print('==   `df` contains a dataframe of the results')
+    print('==   `plt` is `matplotlib.pyplot`')
+    print('================================================================================')
+
     # generate the plots
     df, plots = main(df, df_old)
 
@@ -776,6 +769,8 @@ if __name__ == '__main__':
     def show_plots():
         print(f'Showing plots...')
         plt.show()
+
+    print(f'== Use `{save_plots.__name__}()` and `{show_plots.__name__}()` to store/show results')
 
     for arg in args:
         arg = arg.lower()
@@ -880,5 +875,6 @@ if __name__ == '__main__':
 # (managed to get most of the changes to be automatic in `save_plots_as_latex(...)`)
 #  - Set ymin, ymax if appropriate (runtime and io volume have ymin=0 by default already) (consider adding any changes to code)
 #  - Change legend position if it isn't placed well (legend stye {at, anchor}) (counldn't find an easy way to automate this, since each plot is separate so we have to rely on the automatic placement)
+#    - Specifically for the TPCH graphs. (the legend is also really big here, consider changing '+ freq, idx' to just '+ idx' to make it less wide)
 #  - Comment out certain series to hide lines we don't want to show:
 #    - seq_micro {hardware/postgres} IO rate vs parallelism: remove the sampling+freq line
