@@ -412,14 +412,14 @@ def plot_figures_parallelism(df: pd.DataFrame, exp: Union[str, list], subtitle: 
         df = df[df.parallelism.ne(1)]
 
     ret_list += [
-        plot_exp(df, exp, y='hit_rate', ylabel='Hit-rate', ybound=hitrate_ybound,
+        plot_exp(df, exp, y='hit_rate', ylabel='Hit Rate', ybound=hitrate_ybound,
                  title=f'Hit rate vs parallelism - {subtitle}', **parallelism_common_args),
     ] if hitrate else []
 
     ret_list += [
-        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap Hit-rate', ybound=hitrate_ybound,
+        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap Hit Rate', ybound=hitrate_ybound,
                  title=f'Heap hit rate vs parallelism - {subtitle}', **parallelism_common_args),
-        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index Hit-rate', ybound=hitrate_ybound,
+        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index Hit Rate', ybound=hitrate_ybound,
                  title=f'Index hit rate vs parallelism - {subtitle}', **parallelism_common_args),
     ] if separate_hitrate else []
 
@@ -477,14 +477,14 @@ def plot_figures_shmem(df: pd.DataFrame, exp: Union[str, list], subtitle: str,
         df = df[df.parallelism.ne(1)]
 
     ret_list += [
-        plot_exp(df, exp, y='hit_rate', ylabel='Hit-rate', ybound=hitrate_ybound,
+        plot_exp(df, exp, y='hit_rate', ylabel='Hit Rate', ybound=hitrate_ybound,
                  title=f'Hit rate vs cache size - {subtitle}', **shmem_common_args),
     ] if hitrate else []
 
     ret_list += [
-        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap Hit-rate', ybound=hitrate_ybound,
+        plot_exp(df, exp, y='lineitem_heap_hitrate', ylabel='Heap Hit Rate', ybound=hitrate_ybound,
                  title=f'Heap hit rate vs cache size - {subtitle}', **shmem_common_args),
-        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index Hit-rate', ybound=hitrate_ybound,
+        plot_exp(df, exp, y='lineitem_idx_hitrate', ylabel='Index Hit Rate', ybound=hitrate_ybound,
                  title=f'Index hit rate vs cache size - {subtitle}', **shmem_common_args),
     ] if separate_hitrate else []
 
@@ -681,7 +681,7 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
     if include_seq_ram:
         plots += plot_figures_parallelism(df[df.branch.isin(['base', 'pbm1', 'pbm2']) & df.pbm_evict_num_samples.isin(['10', ''])],
                                           ['parallelism_micro_seqscans_ram_1'], 'RAM Sequential Scan Microbenchmarks',
-                                          omit_p1=False, iovol=True,)
+                                          omit_p1=True, iovol=True,)
 
     # TODO remove random from the graphs?
     if include_tpch:
