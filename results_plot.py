@@ -638,6 +638,11 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
     include_idx_trailing = False
     include_idx_sequential = False
 
+    # Modifiers for the graphs
+    idx_features_cummulative = True     # for index experiments: whether to show sampling with JUST index support or index+freq
+    idx_include_extras = False          # for index experiments: whether to generate a separate set of graphs which each configuration
+
+
     ### sequential/bitmap scan microbenchmarks - parallelism - final results
     if include_seq_parallel:
         plots += [
@@ -694,33 +699,44 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
         plots += plot_figures_parallelism(df, ['tpch_brin_3',], 'TPCH BRIN only', iolat=True, iorate=True, iovol=True)
 
     if include_idx_trailing:
+        if idx_features_cummulative:
+            exps = ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_pbm4_2_all']
+        else:
+            exps = ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_pbm4_2_idx']
         plots += [
             ### trailing index scan microbenchmarks - final results
-            *plot_figures_parallelism(df[df.pbm_evict_num_samples.ne('1')], ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_pbm4_2_idx'], 'Trailing index scans 1pct',
+            *plot_figures_parallelism(df[df.pbm_evict_num_samples.ne('1')], exps, 'Trailing index scans 1pct',
                                       separate_hitrate=False, iorate=False, iolat=False, iovol=True),
-
-
-            *plot_figures_parallelism(df, ['micro_idx_parallelism_pbm4_2_idx', 'micro_idx_parallelism_pbm4_2_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_no_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_freq+lru_nr', 'micro_idx_parallelism_pbm4_2_all'],
-                                      'Trailing index scans 1pct EXTRA', separate_hitrate=False, iorate=False, iolat=False, iovol=True),
-            # ^ RESULTS: no_idx+lru_nr is good. Conclusions: frequency is good, idx support does nothing, lru_nr doesn't help without frequency stats...
-
-            # *plot_figures_parallelism(df, ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_high_baseline_1', 'micro_idx_parallelism_pbm4_2_idx', 'micro_idx_parallelism_high_pbm4_2_idx'], 'Trailing index MORE EXTRAS',
-            #                           separate_hitrate=False, iorate=False, iolat=False, iovol=False),
-            # ^ going to higher parallelism, index doesn't actually seem to help unfortunately
-
         ]
+
+        if idx_include_extras:
+            plots += [
+                *plot_figures_parallelism(df, ['micro_idx_parallelism_pbm4_2_idx', 'micro_idx_parallelism_pbm4_2_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_no_idx+lru_nr', 'micro_idx_parallelism_pbm4_2_freq+lru_nr', 'micro_idx_parallelism_pbm4_2_all'],
+                                        'Trailing index scans 1pct EXTRA', separate_hitrate=False, iorate=False, iolat=False, iovol=True),
+                # ^ RESULTS: no_idx+lru_nr is good. Conclusions: frequency is good, idx support does nothing, lru_nr doesn't help without frequency stats...
+
+                # *plot_figures_parallelism(df, ['micro_idx_parallelism_baseline_1', 'micro_idx_parallelism_high_baseline_1', 'micro_idx_parallelism_pbm4_2_idx', 'micro_idx_parallelism_high_pbm4_2_idx'], 'Trailing index MORE EXTRAS',
+                #                           separate_hitrate=False, iorate=False, iolat=False, iovol=False),
+                # ^ going to higher parallelism, index doesn't actually seem to help unfortunately
+            ]
 
     if include_idx_sequential:
+        if idx_features_cummulative:
+            exps = ['parallelism_ssd_btree_1', 'parallelism_ssd_btree_pbm4_3_all']
+        else:
+            exps = ['parallelism_ssd_btree_1', 'parallelism_ssd_btree_pbm4_3_idx']
         plots += [
             ### sequential index scan microbenchmarks - final results
-            *plot_figures_parallelism(df[df.pbm_evict_num_samples.ne('1')], ['parallelism_ssd_btree_1', 'parallelism_ssd_btree_pbm4_3_idx'], 'Sequential index scans',
+            *plot_figures_parallelism(df[df.pbm_evict_num_samples.ne('1')], exps, 'Sequential index scans',
                                       separate_hitrate=False, iorate=False, iolat=False, iovol=True,
                                       time_ybound=(0, 60), hitrate_ybound=(0.9, 1.0)),
-
-            *plot_figures_parallelism(df, ['parallelism_ssd_btree_pbm4_3_idx', 'parallelism_ssd_btree_pbm4_3_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_no_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_freq+lru_nr', 'parallelism_ssd_btree_pbm4_3_all'],
-                                      'Sequential index scans EXTRAS', separate_hitrate=False, iorate=False, iolat=False, iovol=True,
-                                      time_ybound=(0, 60), hitrate_ybound=(0.9, 1.0)),
         ]
+        if idx_include_extras:
+            plots += [
+                *plot_figures_parallelism(df, ['parallelism_ssd_btree_pbm4_3_idx', 'parallelism_ssd_btree_pbm4_3_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_no_idx+lru_nr', 'parallelism_ssd_btree_pbm4_3_freq+lru_nr', 'parallelism_ssd_btree_pbm4_3_all'],
+                                        'Sequential index scans EXTRAS', separate_hitrate=False, iorate=False, iolat=False, iovol=True,
+                                        time_ybound=(0, 60), hitrate_ybound=(0.9, 1.0)),
+            ]
 
     return df, plots
 
@@ -878,3 +894,4 @@ if __name__ == '__main__':
 #    - Specifically for the TPCH graphs. (the legend is also really big here, consider changing '+ freq, idx' to just '+ idx' to make it less wide)
 #  - Comment out certain series to hide lines we don't want to show:
 #    - seq_micro {hardware/postgres} IO rate vs parallelism: remove the sampling+freq line
+#  - Update legent names: "+ freq, idx, nrlru" could just be "+ idx" as long as it is stated that it is cummulative (i.e. idx uncludes frequency stuff) -- haven't decided exactly how to do it (this could also be automated once decided)
