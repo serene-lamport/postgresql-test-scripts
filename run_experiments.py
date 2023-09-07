@@ -272,7 +272,6 @@ def test_micro_base(work: CountedWorkloadConfig, seeds: List[Optional[int]], sel
         parallel_ops = [1, 2, 4, 6, 8, 12, 16, 24, 32]
     if nsamples is None:
         nsamples = [1, 2, 5, 10, 20]
-    # TODO make cache_time a list! (or, have a single list of (nsamples, cache time) tuples)
     if branches is None:
         branches = POSTGRES_ALL_BRANCHES
 
@@ -502,26 +501,14 @@ def test_tpch():
     run_tests('tpch_pbm4_1_freq+nrlru', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
                                             pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
 
-    # TODO ^ PBM2 with 32 samples, seed=32495=rand_seeds[4] has weirdly lower runtime than the others?
-    # TODO ^ dir = TPCH_2023-08-16_10-46-45
-
-    # re-run the sketch result...
-    # run_tests('tpch_3', run_test_tpch(rand_seeds[4:5], **common_args, parallel_ops=[32,], branches=[ BRANCH_PBM2, ],))
-    # dir = TPCH_2023-08-17_14-14-26  <<< TODO ADD THIS TO IGNORED OUTLIERS IF WE DON'T USE IT!
-
 
 
 def test_tpch_brinonly():
     common_args = {
         'nsamples': [1, 10],
 
-
         'cgmem_gb': 5.0,  # had an error at 4.0
         'shmem': '2560MB',
-
-
-        # 'cgmem_gb': 4.0,
-        # 'shmem': '2048MB',
 
         # different indexes
         'indexes': 'brin',  # only BRIN indexes, no btree
@@ -545,7 +532,6 @@ def test_tpch_brinonly():
                                             pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
 
 
-
 def test_micro_seq_shmem():
     """Experiment: lineitem microbenchmarks with only sequential/bitmap scans varying the amount of shared memory"""
     common_args = {
@@ -567,7 +553,6 @@ def test_micro_seq_shmem():
 
     # compare different # of samples
     run_tests('shmem_micro_seqs_1', gen_micro_shmem(rand_seeds[5:5], **common_args, nsamples=[5, 20], branches=[BRANCH_PBM2, ], ),)
-    # TODO TPCH_2023-06-29_09-05-10/ failed to finalize, may need to manually remove the folder but maybe not... (already re-ran)
 
     # multi-eviction
     run_tests('shmem_micro_seqs_1', gen_micro_shmem(rand_seeds[5:5], **common_args, nsamples=[10], nvictims=10, branches=[BRANCH_PBM2, ], ))
@@ -605,14 +590,12 @@ def test_micro_seqscans(ssd=True):
         run_tests('parallelism_micro_seqscans_hdd_1',
                   test_micro_parallelism(rand_seeds[5:5], **common_args, **HDD_HOST_ARGS_TPCH, nsamples=[1, 10, 100],
                                          branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
-        # TODO experiment {seed=32495, pbm3, samples=10, parallelism=24} (118/126) may need to be redone - may have had network issues...
 
         # same experiment from RAM (i.e. no cgroup)
         common_args['cgmem_gb'] = None
         run_tests('parallelism_micro_seqscans_ram_1',
                   test_micro_parallelism(rand_seeds[5:5], **common_args, **HDD_HOST_ARGS_TPCH, nsamples=[1, 10, 100],
                                          branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
-    # TODO try PBM4? (expect no changes since no index scans)
 
 
 def test_micro_trailing_idx():
@@ -623,12 +606,6 @@ def test_micro_trailing_idx():
         'selectivity': 0.01, 'pct_of_range': 5, 'cm': 6, 'shmem': '2560MB', 'blk_sz': 8, 'bg_sz': 1024,
         # 'indexes': 'btree', 'clustering': 'dates',
     }
-    # default_pbm4_args = {
-    #     'pbm_evict_use_freq': False,
-    #     'pbm_idx_scan_num_counts': 0,
-    #     'pbm_evict_use_idx_scan': True,
-    #     'pbm_lru_if_not_requested': True,
-    # }
 
     # for non-PBM4 as reference
     run_tests('micro_idx_parallelism_baseline_1',
@@ -714,12 +691,6 @@ def test_micro_seq_index_scans():
               test_micro_parallelism(rand_seeds[5:5], **common_args, **standard_args, branches=[BRANCH_PBM4,],
                                      pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True,}))
 
-    # # re-run experiment with wonky results...
-    # run_tests('parallelism_ssd_btree_pbm4_3_idx+lru_nr',
-    #           test_micro_parallelism([rand_seeds[1]], **common_args, branches=[BRANCH_PBM4,], parallel_ops=[24], nsamples=[10],
-    #                                  pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True,}))
-
-
     # # try again without parallel scans, maybe that is screwing things up... nope! still doesn't help :(
     # run_tests('parallelism_ssd_btree_pbm4_2_noparallel',
     #           test_micro_parallelism(rand_seeds[1:1], **common_args, branches=[BRANCH_PBM4,], parallel_ops=[24], nsamples=[10],
@@ -754,7 +725,7 @@ if __name__ == '__main__':
     if len(sys.argv) <= 1:
         workloads = '\n\t'.join(main_experiments.keys())
         print(f'Allowed workloads:\n\t{workloads}')
-        raise Exception("Expected a workload type!")
+        exit()
 
 
     # check arguments first
@@ -770,3 +741,25 @@ if __name__ == '__main__':
         print(f'>>>>> STARTING WORKLOAD = {main_workload} <<<<<')
         test_fn()
         print(f'>>>>> COMPLETED WORKLOAD = {main_workload} <<<<<')
+
+
+##########################
+### USING THIS SCRIPT  ###
+##########################
+# This runs the actual experiments. It is called with a single argument specifying which set of experiments to run.
+# Specify multiple arguments to run multiple sets of experiments.
+# The possible arguments are defined in `main_experiments` with the function used for the corresponding experiment.
+# Running without args will print out the list of options.
+
+# Adding a new experiment:
+# - Add an entry to `main_experiments` with the name and a function which actually runs the experiments.
+# - Define the function to run your experiment. See the existing experiments as a template.
+# - The general structure is:
+#    - Some function, (e.g. `run_test_tpch`, `test_micro_parallelism`) generates a list of `ExperimentConfig`
+#    - The above function is called, likely multiple times with different arguments
+#    - The resulting list of configs is passed to `run_tests` along with an "experiment name"
+# - One note: the first argument to the function which generates the list of experiments is the list of random seeds to use.
+#   Some pre-selected random seeds are stored in `rand_seeds` to use the same set of seeds for comparing different
+#   configurations. To run an experiment 5 times would use `rand_seeds[0:5]` for the first 5 seeds. After running the
+#   experiments, I would change it to `[5:5]` to prevent accidentally running the same experiment again. (while still
+#   showing which experiments have already been done) So for RERUNNING an experiment, this needs to be changed back.
