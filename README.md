@@ -44,6 +44,10 @@ Using the scripts
     - See the comments block at the bottom of `run_experiments.py` for more details.
     - The script is called with one (or more) argument specifying the experiment(s) to run.
     - The experiments may run for a long time, so I highly recommend running the script in a `tmux` session (or something equivalent) so you don't need to stay connected to the machine.
+    - Note: it IS SAFE to cancel the script (`Ctrl+C`) while it is running, and it will properly shut down the database and clean up.
+        - There are a few race conditions where it may leave the DB running -- but while BenchBase is running it is definitely safe to shut down.
+        - If you cancel while indexes are being reconfigured, you can run `./run_util.py drop_indexes <args...>` to remove all indexes/constraints just in case something was left behind.
+        - Depending on what was running and how far it got, re-running may result in duplicated experiment runs, so be careful about that.
 10. After experiments complete, run `results_collect_to_csv.py` to aggregate the results in to `results.csv`.
     - Note: this will _replace_ `results.csv`, not retaining data for experiments where the raw results are not present on your machine. You may want to copy it first and modify the scripts in some way to retain the old data.
 11. Modify and run `./results_plot.py` to generate graphs or do manual analysis.
