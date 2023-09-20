@@ -131,6 +131,7 @@ class WeightedWorkloadConfig(WorkloadConfig):
     def write_bbase_config(self, work_element: ET.Element):
         ET.SubElement(work_element, 'rate').text = self.rate
         ET.SubElement(work_element, 'arrival').text = self.arrival
+        ET.SubElement(work_element, 'randomize').text = str(True)
         ET.SubElement(work_element, 'warmup').text = str(self.warmup_s)
         ET.SubElement(work_element, 'weights').text = self.weights
         ET.SubElement(work_element, 'time').text = str(self.time_s)
@@ -154,17 +155,24 @@ class CountedWorkloadConfig(WorkloadConfig):
     """Benchbase workload where each query is run a certain number of times (from each worker)"""
     counts: List[int]
     count_multiplier: int = 1
+    randomized: bool = True
 
     def with_multiplier(self, cm) -> 'CountedWorkloadConfig':
         """Set the count for each query in each thread"""
         ret = copy.copy(self)
         ret.count_multiplier = cm
+        return ret
 
+    def randomize(self, randomize) -> 'CountedWorkloadConfig':
+        """Whether to randomize the order, or run queries in-order for each thread"""
+        ret = copy.copy(self)
+        ret.randomized = randomize
         return ret
 
     def write_bbase_config(self, work_element: ET.Element):
         ET.SubElement(work_element, 'rate').text = 'unlimited'
         ET.SubElement(work_element, 'arrival').text = 'regular'
+        ET.SubElement(work_element, 'randomize').text = str(self.randomized)
         # ET.SubElement(work_element, 'warmup').text = '0'
         ET.SubElement(work_element, 'counts').text = ','.join(str(c * self.count_multiplier) for c in self.counts)
 
@@ -175,6 +183,7 @@ class CountedWorkloadConfig(WorkloadConfig):
             'selectivity': self.selectivity if self.selectivity is not None else '',
             # specific to this workload type:
             'count_multiplier': self.count_multiplier,
+            'query_order_randomized': self.randomized,
         }
 
 

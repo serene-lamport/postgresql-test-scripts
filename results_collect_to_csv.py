@@ -39,7 +39,7 @@ csv_cols = [
     'work_mem', 'synchronize_seqscans', 'pbm_evict_num_samples', 'pbm_bg_naest_max_age', 'pbm_evict_num_victims',
     'pbm_evict_use_freq', 'pbm_evict_use_idx_scan', 'pbm_idx_scan_num_counts', 'pbm_lru_if_not_requested',
     'parallelism', 'time',
-    'count_multiplier', 'prewarm', 'seed',
+    'count_multiplier', 'prewarm', 'seed', 'query_order_randomized',
     # from OS IO statis
     *SYSBLOCKSTAT_COLS,
     # from benchbase summary:

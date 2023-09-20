@@ -217,10 +217,11 @@ def run_test_tpch(seeds: List[int], *,
                   branches: List[PgBranch], parallel_ops: List[int],
                   shmem: str, cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
                   extra_pg_args: dict = None, pbm4_extra_args: dict = None,
-                  indexes='btree+brin', clustering='dates'
+                  indexes='btree+brin', clustering='dates',
+                  randomize: bool = True,
                   ) -> Iterable[ExperimentConfig]:
     """Run TPCH workload"""
-    work = copy.copy(WORKLOAD_TPCH_COUNTS)
+    work = WORKLOAD_TPCH_COUNTS.randomize(randomize=randomize)
     workload = work.workload.with_host_device(SSD_HOST_ARGS['db_host'], SSD_HOST_ARGS['data_root'][1])
     work.workload = workload
     dbdata = DbData(workload, sf=10, block_size=blk_sz, data_root=SSD_HOST_ARGS['data_root'][0])
@@ -474,32 +475,50 @@ def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], d
         run_tests(e_str, not_tried)
 
 
-def test_tpch():
+def test_tpch(randomize=True):
     common_args = {
         # **SSD_HOST_ARGS,
         'nsamples': [10],  #[1, 10],  # 20?   # 1 run for seeds 0:4 only
         'cgmem_gb': 4.0,  # 1.5GB seems necessary for worker memory + whatever else
         'shmem': '2560MB',
+        'randomize': randomize,
     }
 
-    # run TPCH tests for main branches
-    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[24], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+    if randomize:
+        # run TPCH tests for main branches
+        run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+        run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[24], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+        run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
 
-    # run with index support
-    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
-                                            pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
-    # run_tests('tpch_pbm4_1_idx+nrlru', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
-    #                                            pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+        # run with index support
+        run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                                pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+        # run_tests('tpch_pbm4_1_idx+nrlru', run_test_tpch(rand_seeds[3:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+        #                                            pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
 
-    # repeat with 20 samples
-    common_args['nsamples'] = [20]
-    run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, ],))
-    run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
-                                            pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
-    run_tests('tpch_pbm4_1_freq+nrlru', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
-                                            pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+        # repeat with 20 samples
+        common_args['nsamples'] = [20]
+        run_tests('tpch_3', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, ],))
+        run_tests('tpch_pbm4_1_all', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                                pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+        run_tests('tpch_pbm4_1_freq+nrlru', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                                pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+
+    else:
+        # NOT randomized!
+        # use 20 samples... could change the initial map definition, but want code to stay consistent with existing results
+        common_args['nsamples'] = [1, 20]
+
+        # run TPCH tests for main branches
+        run_tests('tpch_sameorder_1', run_test_tpch(rand_seeds[0:3], **common_args, parallel_ops=[32,], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+        run_tests('tpch_sameorder_1', run_test_tpch(rand_seeds[0:3], **common_args, parallel_ops=[24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+
+        # with index support
+        run_tests('tpch_sameorder_pbm4_1_all', run_test_tpch(rand_seeds[0:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+                                                pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
+
+        # TODO consider going to 5 seeds
+
 
 
 
@@ -720,6 +739,7 @@ if __name__ == '__main__':
         "micro_trailing_idx": test_micro_trailing_idx,
         "tpch": test_tpch,
         "tpch_brinonly": test_tpch_brinonly,
+        "tpch_sameorder": lambda: test_tpch(randomize=False),
     }
 
     if len(sys.argv) <= 1:
