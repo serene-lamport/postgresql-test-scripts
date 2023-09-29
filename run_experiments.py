@@ -510,11 +510,11 @@ def test_tpch(randomize=True):
         common_args['nsamples'] = [1, 20]
 
         # run TPCH tests for main branches
-        run_tests('tpch_sameorder_1', run_test_tpch(rand_seeds[0:3], **common_args, parallel_ops=[32,], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
-        run_tests('tpch_sameorder_1', run_test_tpch(rand_seeds[0:3], **common_args, parallel_ops=[24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+        run_tests('tpch_sameorder_1', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32,], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
+        run_tests('tpch_sameorder_1', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[24, 1, 2, 4, 6, 8, 12, 16], branches=[ BRANCH_PBM3, BRANCH_PBM2, BRANCH_POSTGRES_BASE, BRANCH_PBM1,],))
 
         # with index support
-        run_tests('tpch_sameorder_pbm4_1_all', run_test_tpch(rand_seeds[0:3], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
+        run_tests('tpch_sameorder_pbm4_1_all', run_test_tpch(rand_seeds[5:5], **common_args, parallel_ops=[32, 24, 1, 2, 4, 6, 8, 12, 16], branches=[BRANCH_PBM4,],
                                                 pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,}))
 
         # TODO consider going to 5 seeds

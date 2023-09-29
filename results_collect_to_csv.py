@@ -143,7 +143,7 @@ def io_metrics_map(metrics: dict, blk_sz: int) -> dict:
     return metrics_totals
 
 
-def collect_results_to_csv(res_dir: Path, csv_out: Path):
+def collect_results_to_csv(res_dir: Path, csv_out: Path, sort_rows=True):
     decoder = json.JSONDecoder()
     json_decode = decoder.decode
 
@@ -222,7 +222,8 @@ def collect_results_to_csv(res_dir: Path, csv_out: Path):
 
                 rows.append(row)
 
-                writer.writerow(row)
+                if not sort_rows:
+                    writer.writerow(row)
 
                 if stream_times and min(stream_times) < 0:
                     print(f'WARNING: negative stream times for {conf_dir}! e={config["experiment"]}')
@@ -230,6 +231,12 @@ def collect_results_to_csv(res_dir: Path, csv_out: Path):
         except FileNotFoundError as e:
             print(f'ERROR: could not find the benchbase files for {conf_dir}!')
             print(f'    {e!r}')
+
+    if sort_rows:
+        print('SORTING')
+        rows.sort(key = lambda r: r['dir'])
+        print('WRITING')
+        writer.writerows(rows)
 
     out.close()
 

@@ -380,9 +380,12 @@ def parallelism_grp_sort_key(random_first: bool) -> Callable[[Iterable[str], Any
         # extract group columns
         brnch, samples, victims, freq, idx, nrlru = g[0:6]
 
-        # put random before other PBM-sampling if requested
-        if random_first and brnch == 'pbm2' and samples == '1':
-            brnch = 'pbm1.5'
+        # put random either before all other PBM-sampling or after
+        if brnch == 'pbm2' and samples == '1':
+            if random_first:
+                brnch = 'pbm1.5'
+            else:
+                brnch = 'pbm5'
 
         # sort by: branch first, then bulk eviction, # samples (decreasing), other columns are there to get a consistent order but we don't actually care
         return (brnch.lower(), int(victims or '1'), -int(samples or '0'), freq, idx, nrlru)
@@ -615,6 +618,9 @@ def save_plots_as_latex(plots: List[plt.Axes]):
         tikz_code = tikz_code.replace(', semithick]', ', line width=0.3px]')
         tikz_code = re.sub(r'\[semithick, (\w+\d+), mark=-', r'[line width=0.3px, \1, mark=-', tikz_code)
 
+        # remove "nrlru" from legend names to keep them shorter
+        tikz_code = tikz_code.replace(', nrlru', '')
+
 
 # TODO other edits here!
 
@@ -635,6 +641,7 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
     include_seq_ram = False
     include_tpch = False
     include_tpch_brin = False
+    include_tpch_sameorder = False
     include_idx_trailing = False
     include_idx_sequential = False
 
@@ -688,15 +695,17 @@ def main(df: pd.DataFrame, df_old: pd.DataFrame):
                                           ['parallelism_micro_seqscans_ram_1'], 'RAM Sequential Scan Microbenchmarks',
                                           omit_p1=True, iovol=True,)
 
-    # TODO remove random from the graphs?
     if include_tpch:
-        plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', '1', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True, random_first=True, hitrate_ybound=(0.675,0.849))
+        plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', '1', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH', iolat=True, iorate=True, iovol=True, random_first=False, hitrate_ybound=(0.675,0.849))
         # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['10', ''])], ['tpch_3', 'tpch_pbm4_1_all'], 'TPCH (10)', iolat=False, iorate=False, iovol=True,)
         # plots += plot_figures_parallelism(df[df.pbm_evict_num_samples.isin(['20', '1', ''])], ['tpch_3', 'tpch_pbm4_1_all', 'tpch_pbm4_1_freq+nrlru'], 'TPCH', iolat=True, iorate=True, iovol=True, random_first=True, hitrate_ybound=(0.675,0.849))
 
 
     if include_tpch_brin:
         plots += plot_figures_parallelism(df, ['tpch_brin_3',], 'TPCH BRIN only', iolat=True, iorate=True, iovol=True)
+
+    if include_tpch_sameorder:
+        plots += plot_figures_parallelism(df, ['tpch_sameorder_1', 'tpch_sameorder_pbm4_1_all'], 'TPCH same order', iovol=True, random_first=False)
 
     if include_idx_trailing:
         if idx_features_cummulative:
@@ -853,7 +862,7 @@ if __name__ == '__main__':
 
     # MANUAL DATA INSPECTION: what is I/O volume reduction of sampling for micro parallelism?
     df_a = df[df.experiment.eq('parallelism_micro_seqscans_1') & df.pbm_evict_num_samples.isin(['', '10'])]
-    # compare_io_reduction(df_a, ['branch', 'parallelism'], ['data_read_gb'])
+    # compare_io_reduction(df_a, ['branch', 'parallelism'], ['data_read_gb', 'minutes_total'])
 
 
     # MANUAL DATA INSPECTION: what is I/O volume/runtime reduction of sampling for micro cache size?
@@ -877,6 +886,19 @@ if __name__ == '__main__':
     # compare_io_reduction(df_b, ['branch', 'parallelism'], ['data_read_gb', 'minutes_total'], compare_branch='pbm3')
 
 
+    # MANUAL GRAPH GENERATION: (for thesis): data for bar graph comparing runtime of different sample sizes at 16 parallelism
+    df_c = df[df.experiment.eq('parallelism_micro_seqscans_1') & df.branch.eq('pbm2') & df.parallelism.eq(16)].astype({'pbm_evict_num_samples': int})
+    df_c = df_c[['pbm_evict_num_samples', 'minutes_total']].groupby(['pbm_evict_num_samples'])
+    vals = df_c.mean()
+    errs = df_c.sem() * 1.96
+    out_str = ''
+    for i, ns in enumerate(vals.index):
+        out_str += f'({i}, {vals.loc[ns]["minutes_total"]}) +- (0, {errs.loc[ns]["minutes_total"]})\n'
+    # with open('TEMP.tikz', 'w') as f:
+    #     f.write(out_str)
+
+
+
 ##########################
 ### USING THIS SCRIPT  ###
 ##########################
@@ -894,4 +916,4 @@ if __name__ == '__main__':
 #    - Specifically for the TPCH graphs. (the legend is also really big here, consider changing '+ freq, idx' to just '+ idx' to make it less wide)
 #  - Comment out certain series to hide lines we don't want to show:
 #    - seq_micro {hardware/postgres} IO rate vs parallelism: remove the sampling+freq line
-#  - Update legent names: "+ freq, idx, nrlru" could just be "+ idx" as long as it is stated that it is cummulative (i.e. idx uncludes frequency stuff) -- haven't decided exactly how to do it (this could also be automated once decided)
+#  - Update legend names: "+ freq, idx, nrlru" could just be "+ idx" as long as it is stated that it is cummulative (i.e. idx uncludes frequency stuff) -- haven't decided exactly how to do it (this could also be automated once decided)
