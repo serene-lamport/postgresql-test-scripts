@@ -131,8 +131,8 @@ CREATE INDEX l_rd ON lineitem (l_receiptdate ASC);
 CREATE INDEX l_pk_sk ON lineitem (l_partkey ASC, l_suppkey ASC);
 CREATE INDEX l_sk_pk ON lineitem (l_suppkey ASC, l_partkey ASC);
 
--- TODO theo --- change index types to be more appropriate?
+-- TODO --- change index types to be more appropriate?
 -- CREATE INDEX <index_name> ON <table> USING BRIN (<columns...>) [ WITH (pages_per_range = <num>) ];
--- TODO theo --- cluster tables?
+-- TODO --- cluster tables?
 -- CLUSTER <table> USING <index_name>;
 -- CLUSTER <table>; -- to re-order later
