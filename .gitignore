@@ -1,0 +1,12 @@
+# editor/compiler-generated
+.fleet/
+*.pyc
+
+# state/output from test scripts
+last_config*.json
+# results.csv
+
+# local temp...
+test_sql/
+old/
+old_results/
