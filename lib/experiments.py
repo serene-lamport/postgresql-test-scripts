@@ -26,7 +26,7 @@ import tqdm
 from collections import defaultdict
 from dataclasses import dataclass, asdict, fields, field, replace
 import pandas as pd
-
+import io
 from lib.config import *
 
 
@@ -51,7 +51,8 @@ BLOCK_GROUP_SIZES = [1024]
 # BLOCK_GROUP_SIZES = [256, 4096]
 
 # PG_WORK_MEM = '32MB'
-PG_WORK_MEM = '4MB'
+# PG_WORK_MEM = '4MB'
+PG_WORK_MEM = '16MB'
 
 
 # Defaults for parameters with multiple options
@@ -127,6 +128,9 @@ class WeightedWorkloadConfig(WorkloadConfig):
         ret.time_s = time_s
         ret.warmup_s = warmup
         return ret
+    
+    def with_multiplier(self, cm) -> 'WeightedWorkloadConfig':
+        return self
 
     def write_bbase_config(self, work_element: ET.Element):
         ET.SubElement(work_element, 'rate').text = self.rate
@@ -154,6 +158,8 @@ class WeightedWorkloadConfig(WorkloadConfig):
 class CountedWorkloadConfig(WorkloadConfig):
     """Benchbase workload where each query is run a certain number of times (from each worker)"""
     counts: List[int]
+    time_s: int = BBASE_TIME
+    warmup_s: int = BBASE_WARMUP_TIME
     count_multiplier: int = 1
     randomized: bool = True
 
@@ -175,6 +181,8 @@ class CountedWorkloadConfig(WorkloadConfig):
         ET.SubElement(work_element, 'randomize').text = str(self.randomized)
         # ET.SubElement(work_element, 'warmup').text = '0'
         ET.SubElement(work_element, 'counts').text = ','.join(str(c * self.count_multiplier) for c in self.counts)
+        ET.SubElement(work_element, 'time').text = str(self.time_s)
+        ET.SubElement(work_element, 'warmup').text = str(self.warmup_s)
 
     def to_config_map(self) -> dict:
         return {
@@ -184,6 +192,8 @@ class CountedWorkloadConfig(WorkloadConfig):
             # specific to this workload type:
             'count_multiplier': self.count_multiplier,
             'query_order_randomized': self.randomized,
+            'time': self.time_s,
+            'warmup': self.warmup_s
         }
 
 
@@ -195,7 +205,7 @@ TPCC = Workload('tpcc', 'bbase_config/sample_tpcc_config.xml', PG_HOST_TPCC, PG_
 WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,'*16 + '0,'*6 + '0,0,0', time_s=BBASE_TIME)
 WORKLOAD_MICRO_WEIGHTS = WeightedWorkloadConfig('micro_w', TPCH, weights='0,'*22 + '1,1,0', time_s=BBASE_TIME)
 WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c', TPCH, counts=[1]*16 + [0]*6 + [0, 0, 0])
-WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', TPCH, counts=[0]*22 + [1, 1, 0])
+WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', TPCH, counts=[0]*22 + [1, 1, 0]) # Q1alt and Q6alt
 WORKLOAD_MICRO_IDX_COUNTS = CountedWorkloadConfig('microidx_c', TPCH, counts=[0]*22 + [0, 0, 1])
 WORKLOAD_TPCC = WeightedWorkloadConfig('tpcc', TPCC, weights='45,43,4,4,4', time_s=BBASE_TIME, warmup_s=BBASE_WARMUP_TIME)
 
@@ -354,7 +364,8 @@ class RuntimePgConfig:
     synchronize_seqscans: str = 'on'
     track_io_timing: str = 'off'
     work_mem: str = PG_WORK_MEM
-    max_connections: int = None
+    max_connections: int = 150
+    max_prepared_transactions: int = 0
     # Optimizer cost estimation
     seq_page_cost: Optional[float] = None
     random_page_cost: Optional[float] = None
@@ -368,6 +379,7 @@ class RuntimePgConfig:
     pbm_evict_num_victims: Optional[int] = None
     pbm_bg_naest_max_age: Optional[float] = None
     max_pred_locks_per_transaction: Optional[int] = None
+    max_locks_per_transaction: Optional[int] = None
     pbm_evict_whole_block_group: Optional[bool] = None
     # pbm3 and later:
     pbm_evict_use_freq: Optional[bool] = None
@@ -624,7 +636,7 @@ def build_postgres(dbbin: DbBin):
     blk_sz = dbbin.block_size
     bg_sz = dbbin.bg_size
     print(f'Compiling & installing postgres {brnch.name} with block size {blk_sz} and block group size {bg_sz}')
-    ret = subprocess.Popen('make', cwd=build_path).wait()
+    ret = subprocess.Popen(['make', '-j170'], cwd=build_path).wait()
     if ret != 0:
         raise Exception(f'Got return code {ret} when compiling postgres {brnch.name} with block size={blk_sz}, group size={bg_sz}')
     ret = subprocess.Popen(['make', 'install'], cwd=build_path).wait()
@@ -695,7 +707,7 @@ def pg_init_local_db(cl: Cluster):
     cl.settings.update({
         'listen_addresses': '*',
         'port': PG_PORT,
-        'shared_buffers': '8GB',
+        'shared_buffers': '220GB', # to have larger buffer while creating the data
         'work_mem': PG_WORK_MEM,
     })
 
@@ -733,7 +745,8 @@ def start_remote_postgres(conn: fabric.Connection, case: DbConfig, cgroup: CGrou
     logfile = data_dir / 'logfile'
 
     conn.run(f'truncate --size=0 {logfile}')
-    start_cmd = f'{pgctl} start -D {data_dir} -l {logfile}'
+    start_cmd = f'numactl --physcpubind=24-95 --membind=1,2,3 {pgctl} start -D {data_dir} -l {logfile}'
+    # start_cmd = f"{pgctl} start -D {data_dir} -l {logfile}"
     if cgroup is not None:
         conn.run(f'cgset -r memory.limit_in_bytes={cgroup.mem_bytes} {cgroup.name}')
         start_cmd = f'cgexec -g memory:{cgroup.name} {start_cmd}'
@@ -754,7 +767,7 @@ def stop_remote_postgres(conn: fabric.Connection, case: DbConfig, immediate=Fals
 def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
     """Get disk stats of the remote host as a dict"""
     dev = case.data.workload.device
-    res = conn.run(f'cat /sys/block/{dev}/stat', hide=True).stdout.split()
+    res = conn.run(f'cat /sys/class/block/{dev}/stat', hide=True).stdout.split()
 
     return {a: b for a, b in zip(SYSBLOCKSTAT_COLS, res)}
 
@@ -762,6 +775,7 @@ def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
 def prewarm_lineitem(data: DbData, dbhost: str):
     """Prewarm lineitem cache for the given database config (DB must be running)
     """
+    # print('PREWARMING IS DISABLED, MAKE SURE TO ENABLE IT IN THE CODE!')
     with pg.open(data.conn_str(dbhost)) as conn:
         conn: PgConnection
         conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
@@ -774,6 +788,19 @@ def clear_pg_stats(data: DbData, dbhost: str):
         conn: PgConnection
         conn.execute('SELECT pg_stat_reset();')
 
+def collect_pg_stats(data: DbData, dbhost: str, results_dir: Path):
+    """Collect IO statistics for the given database config (DB must be running))"""
+    with pg.open(data.conn_str(dbhost)) as conn:
+        conn: PgConnection
+        views = [
+            "pg_stat_archiver", "pg_stat_bgwriter", "pg_stat_database",
+            "pg_stat_database_conflicts", "pg_stat_user_tables", "pg_statio_user_tables",
+            "pg_stat_user_indexes", "pg_statio_user_indexes"
+        ]
+        
+        for view in views:
+            outpath = results_dir / f'{view}.csv'
+            conn.execute(f"Copy (Select * From {view}) To '{outpath}' With CSV Delimiter ',' Header;")
 
 def create_bbase_config(sf: int, bb_config: BBaseConfig, out, host):
     """Set connection information and scale factor in a BenchBase config file."""
@@ -831,7 +858,8 @@ def run_bbase_load(b: str, config: Path, create=False):
     ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
 
 
-def run_bbase_test(exp: ExperimentConfig):
+
+def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
     """
     Run benchbase (on local machine) against PostgreSQL on the remote host.
     Will start & stop PostgreSQL on the remote host.
@@ -871,16 +899,31 @@ def run_bbase_test(exp: ExperimentConfig):
         with FabConnection(db_host) as conn:
             pre_stats = get_remote_disk_stats(conn, dbconf)
 
-        # Run benchbase
-        subprocess.Popen([
+        
+        benchbase_process = subprocess.Popen([
+            'numactl', 
+            '--membind=0', 
+            '--cpunodebind=0',
             'java',
             '-jar', str(BENCHBASE_INSTALL_PATH / 'benchbase-postgres' / 'benchbase.jar'),
             '-b', bb_workload_name,
             '-c', str(temp_bbase_config),
             '--execute=true',
             '-d', str(exp.results_bbase_subdir),
-        ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
-
+        ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres', stdout=subprocess.PIPE)
+        
+        if wait_for_bbase: 
+            benchbase_process.wait()
+        else: 
+            print('started benchbase')
+            for line in io.TextIOWrapper(benchbase_process.stdout, encoding='utf-8'):
+                print(line, end='\n')
+                if 'Waiting for all terminals to finish' in line: 
+                    print('Benchbase is DONE')
+                    break 
+        
+        collect_pg_stats(dbconf.data, db_host, exp.results_dir)    
+        print("Control out of the loop")
         # get & return iostats after the test
         with FabConnection(db_host) as conn:
             post_stats = get_remote_disk_stats(conn, dbconf)
@@ -890,6 +933,10 @@ def run_bbase_test(exp: ExperimentConfig):
     finally:
         with FabConnection(db_host) as conn:
             stop_remote_postgres(conn, dbconf, immediate=not workload.is_tpch())
+        if not wait_for_bbase: 
+            print('Killing benchbase with SIGING')
+            import signal
+            benchbase_process.send_signal(signal.SIGINT)
 
 
 def pg_exec_file(conn: PgConnection, file):
@@ -1096,7 +1143,8 @@ def read_constraints_indexes(pgconn: PgConnection):
 
 def setup_indexes_cluster_tpch(dbconf: DbConfig, db_host: str, *, prev: DbSetup, new: DbSetup):
     """Change indexes and clustering on the database. Remembers the changes in `last_config.json`"""
-
+    
+    print(f'Setting up indexes and clustering for TPCH on {db_host}...')
     with FabConnection(db_host) as fabconn:
         # Use large amount of memory for creating indexes
         config_remote_postgres(fabconn, dbconf, RuntimePgConfig(shared_buffers='20GB', synchronize_seqscans='on'), db_host)
@@ -1197,7 +1245,6 @@ def clean_pg_installs(base=False):
 
 def one_time_benchbase_setup():
     """Build and install BenchBase on current host."""
-    print('Cloning BenchBase...')
     clone_benchbase_repo()
     build_benchbase()
     install_benchbase()
@@ -1360,11 +1407,11 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     print(f'==   Seed:                  {bbconf.seed}')
     print(f'==   DB host:               {exp_config.db_host}')
     print(f'==   Branch:                {dbconf.branch.name}')
-    # print(f'==   Scale factor:          {sf}')
-    # print(f'==   Block size:            {blk_sz} KiB')
-    # print(f'==   Block group size       {dbconf.bg_size} KiB')
-    # print(f'==   Workload:              {bbconf.workload.workname}')
-    # print(f'==   Worker memory          {PG_WORK_MEM}')
+    print(f'==   Scale factor:          {sf}')
+    print(f'==   Block size:            {blk_sz} KiB')
+    print(f'==   Block group size       {dbconf.bg_size} KiB')
+    print(f'==   Workload:              {bbconf.workload.workname}')
+    print(f'==   Worker memory          {PG_WORK_MEM}')
     print(f'==   Shared memory:         {pgconf.shared_buffers}   ({exp_config.cgroup.mem_gb} GB cgroup)')
     if is_tpch:
         print(f'==   Index definitions:     ddl/index/{dbsetup.indexes}/')
@@ -1384,7 +1431,6 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         print(f'~~~~~~~~~~ Setup indexes={dbsetup.indexes}, clustering={dbsetup.clustering} for blk_sz={blk_sz}, sf={sf} ~~~~~~~~~~')
         constraints, indexes = setup_indexes_cluster_tpch(dbconf=exp_config.dbconf, db_host=exp_config.db_host,
                                                           prev=prev_setup, new=dbsetup)
-
         # remember when indexes and constraints are defined in case we want to double check later...
         with open(results_dir / CONSTRAINTS_FILE, 'w') as f:
             constraints.to_csv(f, index=False)
@@ -1398,10 +1444,11 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         tpcc_restore_data_dir(dbconf)
 
     # Actually run the tests
-    pre_stats, post_stats = run_bbase_test(exp_config)
-    rename_bbase_results(exp_config.results_bbase_subdir)
+    pre_stats, post_stats = run_bbase_test(exp_config, wait_for_bbase=False)
+    
+    # rename_bbase_results(exp_config.results_bbase_subdir)
     # store IO stats in the results
-    with open(exp_config.results_bbase_subdir / IOSTATS_FILE, 'w') as f:
+    with open(exp_config.results_dir / IOSTATS_FILE, 'w') as f:
         iostats = {'before': pre_stats, 'after': post_stats, }
         f.write(json.JSONEncoder(indent=2, sort_keys=True).encode(iostats))
         f.write('\n')  # ensure trailing newline

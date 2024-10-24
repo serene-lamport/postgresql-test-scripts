@@ -17,31 +17,31 @@ import os
 # these options should be modified by anyone trying to run this script to reproduce results
 
 # Postgres connection information
-PG_HOST_TPCH: str = 'tem112'
-PG_HOST_TPCC: str = 'tem114'
+PG_HOST_TPCH: str = 'jax'
+PG_HOST_TPCC: str = 'jax'
 PG_PORT: str = '5432'
 PG_USER: str = os.environ['USER']
 PG_PASSWD: str = ''
 
 # TODO remove these?
 # Postgres data files (absolute path)
-PG_DEFAULT_DATA_ROOT = Path('/hdd1/pgdata')
+PG_DEFAULT_DATA_ROOT = Path('/var/mkhalaji/pgdata')
 # this is the device on the host which has the given file path.
 PG_DATA_DEVICE: str = 'sdb/sdb1'
 # TODO replace /sys/block -> /sys/class/block, and make this just `sdb1` since the hierarchy is flat there
 
 # Some of the above args for running on the SSD host
 SSD_HOST_ARGS = {
-    'data_root': (Path('/hdd2/pgdata'), 'sda/sda3'),
-    'db_host': 'tem06'
+    'data_root': (Path('/var/mkhalaji/pgdata'), 'nvme0n1p2'),
+    'db_host': 'jax'
 }
-HDD_HOST_ARGS_TPCH = {
-    'data_root': (Path('/hdd1/pgdata'), 'sdb/sdb1'),
-    'db_host': 'tem112'
-}
+# HDD_HOST_ARGS_TPCH = {
+#     'data_root': (Path('/hdd1/pgdata'), 'sdb/sdb1'),
+#     'db_host': 'zyra'
+# }
 
 # Where to clone/compile everything (absolute path)
-BUILD_ROOT = Path(os.environ['HOME']) / 'PG_TESTS'
+BUILD_ROOT = Path(os.environ['HOME']) / 'pbm' / 'build_root'
 
 
 #######################################
@@ -69,7 +69,7 @@ class PgBranch:
 
 
 # Postgres git info: repository and branch names
-POSTGRES_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/postgresql-masters-work.git'
+POSTGRES_GIT_URL = 'uw_gitlab:ta3vande/postgresql-masters-work.git'
 # POSTGRES_GIT_URL = 'https://git.uwaterloo.ca/ta3vande/postgresql-masters-work.git'
 
 BRANCH_POSTGRES_BASE = PgBranch(0, 'base', 'REL_14_STABLE')
@@ -107,7 +107,7 @@ POSTGRES_INSTALL_PATH = BUILD_ROOT / 'pg_install'
 POSTGRES_SRC_PATH_BASE = POSTGRES_SRC_PATH / 'base'
 
 # Benchbase
-BENCHBASE_GIT_URL = 'ist-git@git.uwaterloo.ca:ta3vande/benchbase.git'
+BENCHBASE_GIT_URL = 'uw_gitlab:ta3vande/benchbase.git'
 # BENCHBASE_GIT_URL = 'https://@git.uwaterloo.ca/ta3vande/benchbase.git'
 BENCHBASE_SRC_PATH = BUILD_ROOT / 'benchbase_src'
 BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
@@ -143,3 +143,10 @@ SYSBLOCKSTAT_COLS = [
     'discard_ios', 'discard_merges', 'discard_sectors', 'discard_ticks',
     'flush_ios', 'flush_ticks',
 ]
+
+
+
+# print('Configuration:')
+# for k, v in list(locals().items()):
+#     if k.isupper():
+#         print(f'{k}: {v}')

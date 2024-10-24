@@ -1,0 +1,139 @@
+Traceback (most recent call last):
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 699, in connect
+    sock = self.retry.call_with_retry(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/retry.py", line 46, in call_with_retry
+    return do()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 700, in <lambda>
+    lambda: self._connect(), lambda error: self.disconnect(error)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1002, in _connect
+    raise err
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 990, in _connect
+    sock.connect(socket_address)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/mkhalaji/repos/dotfiles/scripts/telelog/telelog_worker.py", line 17, in <module>
+    pubsub.subscribe(channel_name)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1634, in subscribe
+    ret_val = self.execute_command("SUBSCRIBE", *new_channels.keys())
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1469, in execute_command
+    self.connection = self.connection_pool.get_connection(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1457, in get_connection
+    connection.connect()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 705, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379. Connection refused.
+Traceback (most recent call last):
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 699, in connect
+    sock = self.retry.call_with_retry(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/retry.py", line 46, in call_with_retry
+    return do()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 700, in <lambda>
+    lambda: self._connect(), lambda error: self.disconnect(error)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1002, in _connect
+    raise err
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 990, in _connect
+    sock.connect(socket_address)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/mkhalaji/repos/dotfiles/scripts/telelog/telelog_worker.py", line 17, in <module>
+    pubsub.subscribe(channel_name)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1634, in subscribe
+    ret_val = self.execute_command("SUBSCRIBE", *new_channels.keys())
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1469, in execute_command
+    self.connection = self.connection_pool.get_connection(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1457, in get_connection
+    connection.connect()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 705, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379. Connection refused.
+Traceback (most recent call last):
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 699, in connect
+    sock = self.retry.call_with_retry(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/retry.py", line 46, in call_with_retry
+    return do()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 700, in <lambda>
+    lambda: self._connect(), lambda error: self.disconnect(error)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1002, in _connect
+    raise err
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 990, in _connect
+    sock.connect(socket_address)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/mkhalaji/repos/dotfiles/scripts/telelog/telelog_worker.py", line 17, in <module>
+    pubsub.subscribe(channel_name)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1634, in subscribe
+    ret_val = self.execute_command("SUBSCRIBE", *new_channels.keys())
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1469, in execute_command
+    self.connection = self.connection_pool.get_connection(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1457, in get_connection
+    connection.connect()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 705, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379. Connection refused.
+Traceback (most recent call last):
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 699, in connect
+    sock = self.retry.call_with_retry(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/retry.py", line 46, in call_with_retry
+    return do()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 700, in <lambda>
+    lambda: self._connect(), lambda error: self.disconnect(error)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1002, in _connect
+    raise err
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 990, in _connect
+    sock.connect(socket_address)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/mkhalaji/repos/dotfiles/scripts/telelog/telelog_worker.py", line 17, in <module>
+    pubsub.subscribe(channel_name)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1634, in subscribe
+    ret_val = self.execute_command("SUBSCRIBE", *new_channels.keys())
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1469, in execute_command
+    self.connection = self.connection_pool.get_connection(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1457, in get_connection
+    connection.connect()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 705, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379. Connection refused.
+Traceback (most recent call last):
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 699, in connect
+    sock = self.retry.call_with_retry(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/retry.py", line 46, in call_with_retry
+    return do()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 700, in <lambda>
+    lambda: self._connect(), lambda error: self.disconnect(error)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1002, in _connect
+    raise err
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 990, in _connect
+    sock.connect(socket_address)
+ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/mkhalaji/repos/dotfiles/scripts/telelog/telelog_worker.py", line 17, in <module>
+    pubsub.subscribe(channel_name)
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1634, in subscribe
+    ret_val = self.execute_command("SUBSCRIBE", *new_channels.keys())
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/client.py", line 1469, in execute_command
+    self.connection = self.connection_pool.get_connection(
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 1457, in get_connection
+    connection.connect()
+  File "/home/mkhalaji/.local/lib/python3.8/site-packages/redis/connection.py", line 705, in connect
+    raise ConnectionError(self._error_message(e))
+redis.exceptions.ConnectionError: Error 111 connecting to localhost:6379. Connection refused.
+Traceback (most recent call last):
+  File "/home/mkhalaji/repos/dotfiles/scripts/telelog/telelog_worker.py", line 2, in <module>
+    from telethon import TelegramClient, events, sync
+ModuleNotFoundError: No module named 'telethon'
