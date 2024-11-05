@@ -35,6 +35,8 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
         'heap_blks_read': 'pg_statio_user_tables.lineitem.heap_blks_read',
         'idx_blks_hit': 'pg_statio_user_tables.lineitem.idx_blks_hit',
         'idx_blks_read': 'pg_statio_user_tables.lineitem.idx_blks_read',
+        'tot_heap_blks': 'pg_statio_user_tables.lineitem.tot_heap_blks',
+        'tot_idx_blks': 'pg_statio_user_tables.lineitem.tot_idx_blks',
     }
         
     out = []
