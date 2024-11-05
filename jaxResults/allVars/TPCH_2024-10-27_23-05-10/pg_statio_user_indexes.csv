@@ -1,0 +1,6 @@
+relid,indexrelid,schemaname,relname,indexrelname,idx_blks_read,idx_blks_hit
+16406,16419,public,lineitem,l_brin_sd,1123,298965
+16406,16420,public,lineitem,l_brin_cd,0,0
+16406,16421,public,lineitem,l_brin_rd,0,0
+16406,16422,public,lineitem,l_brin_discount,0,0
+16406,16423,public,lineitem,l_brin_qty,21,61

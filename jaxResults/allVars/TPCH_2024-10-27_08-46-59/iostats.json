@@ -1,0 +1,40 @@
+{
+  "after": {
+    "discard_ios": "0",
+    "discard_merges": "0",
+    "discard_sectors": "0",
+    "discard_ticks": "0",
+    "flush_ios": "0",
+    "flush_ticks": "0",
+    "in_flight": "12",
+    "io_ticks": "137555828",
+    "read_ios": "11080780308",
+    "read_merges": "129245",
+    "read_ticks": "1866373840",
+    "sectors_read": "254708261626",
+    "sectors_written": "2492964616",
+    "time_in_queue": "2017503602",
+    "write_ios": "15262899",
+    "write_merges": "530165",
+    "write_ticks": "151129761"
+  },
+  "before": {
+    "discard_ios": "0",
+    "discard_merges": "0",
+    "discard_sectors": "0",
+    "discard_ticks": "0",
+    "flush_ios": "0",
+    "flush_ticks": "0",
+    "in_flight": "0",
+    "io_ticks": "135751860",
+    "read_ios": "10928598554",
+    "read_merges": "128893",
+    "read_ticks": "1845738058",
+    "sectors_read": "251798585874",
+    "sectors_written": "2492915168",
+    "time_in_queue": "1996867590",
+    "write_ios": "15258496",
+    "write_merges": "529021",
+    "write_ticks": "151129532"
+  }
+}

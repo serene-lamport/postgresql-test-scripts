@@ -31,10 +31,13 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
         'read_ios': 'iostats.difference.read_ios',
         'write_ios': 'iostats.difference.write_ios',
         'hit_rate': 'pg_statio_user_tables.lineitem.hit_rate', 
+<<<<<<< HEAD
         'heap_blks_hit': 'pg_statio_user_tables.lineitem.heap_blks_hit',
         'heap_blks_read': 'pg_statio_user_tables.lineitem.heap_blks_read',
         'idx_blks_hit': 'pg_statio_user_tables.lineitem.idx_blks_hit',
         'idx_blks_read': 'pg_statio_user_tables.lineitem.idx_blks_read',
+=======
+>>>>>>> mine
     }
         
     out = []
