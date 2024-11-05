@@ -1,0 +1,6 @@
+datid,datname,numbackends,xact_commit,xact_rollback,blks_read,blks_hit,tup_returned,tup_fetched,tup_inserted,tup_updated,tup_deleted,conflicts,temp_files,temp_bytes,deadlocks,checksum_failures,checksum_last_failure,blk_read_time,blk_write_time,session_time,active_time,idle_in_transaction_time,sessions,sessions_abandoned,sessions_fatal,sessions_killed,stats_reset
+0,,0,0,0,5494,85996,29232,22128,1,0,0,0,0,0,0,,,0,0,0,0,0,0,0,0,0,2024-10-23 20:29:36.612887-04
+12974,postgres,0,1703,0,12912,80332,1067389,23095,0,0,0,0,0,0,0,,,2405.495,0,1154.175,1149.037,0,1,0,0,0,2024-10-23 20:29:36.612849-04
+16384,TPCH_100,32,780,0,230163795,195958420,4256566668,22693179228,0,0,0,0,0,0,0,,,25717233.252,0,40850499.828,40846553.65,103.49,26,0,0,0,2024-10-24 22:42:29.518295-04
+1,template1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,,0,0,0,0,0,0,0,0,0,
+12973,template0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,,0,0,0,0,0,0,0,0,0,

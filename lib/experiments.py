@@ -745,7 +745,7 @@ def start_remote_postgres(conn: fabric.Connection, case: DbConfig, cgroup: CGrou
     logfile = data_dir / 'logfile'
 
     conn.run(f'truncate --size=0 {logfile}')
-    start_cmd = f'numactl --physcpubind=24-95 --membind=1,2,3 {pgctl} start -D {data_dir} -l {logfile}'
+    start_cmd = f'numactl --physcpubind=64-127,192-255 --membind=1 {pgctl} start -D {data_dir} -l {logfile}'
     # start_cmd = f"{pgctl} start -D {data_dir} -l {logfile}"
     if cgroup is not None:
         conn.run(f'cgset -r memory.limit_in_bytes={cgroup.mem_bytes} {cgroup.name}')

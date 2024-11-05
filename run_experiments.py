@@ -804,7 +804,7 @@ def test_micro_parallelism_ALT(seeds: List[Optional[int]], selectivity: Optional
                            extra_pg_args: dict = None, pbm4_extra_args: dict = None, sf=10) \
         -> Iterable[ExperimentConfig]:
     print(f"Returning the iterator for test_micro_parallelism")
-    workload = WeightedWorkloadConfig('micro_w', TPCH, weights='0,'*22 + '50,50,0', time_s=30*60)
+    workload = WeightedWorkloadConfig('micro_w', TPCH, weights='0,'*22 + '50,50,0', time_s=4*60*60)
     # workload = CountedWorkloadConfig('micro_c', TPCH, counts=[0]*22 + [1, 1, 0], time_s=60, warmup_s=0) # Q1alt and Q6alt
     return test_micro_base_ALT(workload, seeds, selectivity, ssd=ssd,
                            cm=cm, parallel_ops=parallel_ops, nsamples=nsamples, nvictims=nvictims,
@@ -846,7 +846,7 @@ def test_micro_seqscans_ALT(ssd=True):
         'selectivity': 0.3, 'cm': 8, 'shmem': '26624MB',
         'indexes': 'lineitem_brinonly', 'clustering': 'dates',
         'pbm4_extra_args': {'pbm_evict_use_freq': False},
-        'parallel_ops': [24][::-1],
+        'parallel_ops': [64][::-1],
         
     }
 
@@ -854,11 +854,14 @@ def test_micro_seqscans_ALT(ssd=True):
         # Compare different branches
 
         # branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3]
+        branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2]
         # branches = [BRANCH_PBM2]
-        branches = [BRANCH_POSTGRES_BASE] # Do the clock sweep only
+        # branches = [BRANCH_POSTGRES_BASE] # Do the clock sweep only
+        # branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM2]
+        nsamples = [1, 10]
         
         run_tests('parallelism_micro_seqscans_ALT_1',
-                  test_micro_parallelism_ALT(rand_seeds[5:8], **common_args, **SSD_HOST_ARGS, nsamples=[1, 5, 10, 20, 100],
+                  test_micro_parallelism_ALT(rand_seeds[7:10], **common_args, **SSD_HOST_ARGS, nsamples=nsamples,
                                          branches=branches, sf=100))  # , BRANCH_PBM4
 
         # # # Try PBM-sampling with different #s of samples

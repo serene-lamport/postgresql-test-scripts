@@ -1,0 +1,6 @@
+table,index,indexdef
+lineitem,l_brin_sd,CREATE INDEX l_brin_sd ON public.lineitem USING brin (l_shipdate) WITH (pages_per_range='32.0')
+lineitem,l_brin_cd,CREATE INDEX l_brin_cd ON public.lineitem USING brin (l_commitdate) WITH (pages_per_range='32.0')
+lineitem,l_brin_rd,CREATE INDEX l_brin_rd ON public.lineitem USING brin (l_receiptdate) WITH (pages_per_range='32.0')
+lineitem,l_brin_discount,CREATE INDEX l_brin_discount ON public.lineitem USING brin (l_discount) WITH (pages_per_range='32.0')
+lineitem,l_brin_qty,CREATE INDEX l_brin_qty ON public.lineitem USING brin (l_quantity) WITH (pages_per_range='32.0')

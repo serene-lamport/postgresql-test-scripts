@@ -1,0 +1,2 @@
+checkpoints_timed,checkpoints_req,checkpoint_write_time,checkpoint_sync_time,buffers_checkpoint,buffers_clean,maxwritten_clean,buffers_backend,buffers_backend_fsync,buffers_alloc,stats_reset
+84,530,17714093,56582,23686077,0,0,35998956,0,2661573911,2024-10-23 20:29:36.56581-04

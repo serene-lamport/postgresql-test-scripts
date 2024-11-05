@@ -1,0 +1,9 @@
+relid,schemaname,relname,heap_blks_read,heap_blks_hit,idx_blks_read,idx_blks_hit,toast_blks_read,toast_blks_hit,tidx_blks_read,tidx_blks_hit
+16397,public,partsupp,0,0,,,,,,
+16385,public,region,0,0,,,,,,
+16394,public,supplier,0,0,,,,,,
+16403,public,orders,0,0,,,,,,
+16391,public,part,0,0,,,,,,
+16400,public,customer,0,0,,,,,,
+16406,public,lineitem,155992121,248209063,121753,260248,,,,
+16388,public,nation,0,0,,,,,,

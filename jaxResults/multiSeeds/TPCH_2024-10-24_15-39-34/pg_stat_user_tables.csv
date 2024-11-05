@@ -1,0 +1,9 @@
+relid,schemaname,relname,seq_scan,seq_tup_read,idx_scan,idx_tup_fetch,n_tup_ins,n_tup_upd,n_tup_del,n_tup_hot_upd,n_live_tup,n_dead_tup,n_mod_since_analyze,n_ins_since_vacuum,last_vacuum,last_autovacuum,last_analyze,last_autoanalyze,vacuum_count,autovacuum_count,analyze_count,autoanalyze_count
+16385,public,region,0,0,,,0,0,0,0,0,0,0,0,,,,,0,0,0,0
+16400,public,customer,0,0,,,0,0,0,0,0,0,0,0,,,,,0,0,0,0
+16406,public,lineitem,0,0,296,24007282955,0,0,0,0,0,0,0,0,,,,,0,0,0,0
+16388,public,nation,0,0,,,0,0,0,0,0,0,0,0,,,,,0,0,0,0
+16394,public,supplier,0,0,,,0,0,0,0,0,0,0,0,,,,,0,0,0,0
+16403,public,orders,0,0,,,0,0,0,0,0,0,0,0,,,,,0,0,0,0
+16397,public,partsupp,0,0,,,0,0,0,0,0,0,0,0,,,,,0,0,0,0
+16391,public,part,0,0,,,0,0,0,0,0,0,0,0,,,,,0,0,0,0

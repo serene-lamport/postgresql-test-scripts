@@ -17,8 +17,8 @@ import os
 # these options should be modified by anyone trying to run this script to reproduce results
 
 # Postgres connection information
-PG_HOST_TPCH: str = 'jax'
-PG_HOST_TPCC: str = 'jax'
+PG_HOST_TPCH: str = 'nasus'
+PG_HOST_TPCC: str = 'nasus'
 PG_PORT: str = '5432'
 PG_USER: str = os.environ['USER']
 PG_PASSWD: str = ''
@@ -27,13 +27,13 @@ PG_PASSWD: str = ''
 # Postgres data files (absolute path)
 PG_DEFAULT_DATA_ROOT = Path('/var/mkhalaji/pgdata')
 # this is the device on the host which has the given file path.
-PG_DATA_DEVICE: str = 'sdb/sdb1'
+PG_DATA_DEVICE: str = 'nvme0n1p2'
 # TODO replace /sys/block -> /sys/class/block, and make this just `sdb1` since the hierarchy is flat there
 
 # Some of the above args for running on the SSD host
 SSD_HOST_ARGS = {
     'data_root': (Path('/var/mkhalaji/pgdata'), 'nvme0n1p2'),
-    'db_host': 'jax'
+    'db_host': 'nasus'
 }
 # HDD_HOST_ARGS_TPCH = {
 #     'data_root': (Path('/hdd1/pgdata'), 'sdb/sdb1'),

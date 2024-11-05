@@ -1,0 +1,5 @@
+datid,datname,confl_tablespace,confl_lock,confl_snapshot,confl_bufferpin,confl_deadlock
+12974,postgres,0,0,0,0,0
+16384,TPCH_100,0,0,0,0,0
+1,template1,0,0,0,0,0
+12973,template0,0,0,0,0,0
