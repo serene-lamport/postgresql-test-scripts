@@ -99,14 +99,17 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
                 exp_dir / 'pg_statio_user_indexes.csv', 
                 'indexrelname', 
                 lambdas={
-                    "hit_rate": lambda row: row["idx_blks_hit"] / (row["idx_blks_hit"] + row["idx_blks_read"])
+                    "hit_rate": lambda row: row["idx_blks_hit"] / (row["idx_blks_hit"] + row["idx_blks_read"]), 
+                    "tot_idx_blks": lambda row: row["idx_blks_hit"] + row["idx_blks_read"]
                 }
             ),
             "pg_statio_user_tables": read_csv_file(
                 exp_dir / 'pg_statio_user_tables.csv', 
                 'relname', 
                 lambdas={
-                    "hit_rate": lambda row: row["heap_blks_hit"] / (row["heap_blks_hit"] + row["heap_blks_read"])
+                    "hit_rate": lambda row: row["heap_blks_hit"] / (row["heap_blks_hit"] + row["heap_blks_read"]),
+                    "tot_heap_blks": lambda row: row["heap_blks_hit"] + row["heap_blks_read"], 
+                    "tot_idx_blks": lambda row: row["idx_blks_hit"] + row["idx_blks_read"]
                 }
             )
             
