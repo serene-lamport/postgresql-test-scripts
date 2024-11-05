@@ -590,39 +590,41 @@ def test_micro_seqscans(ssd=True):
     """Experiment: lineitem microbenchmarks with only sequential/bitmap scans"""
     # host_args = SSD_HOST_ARGS if ssd else HDD_HOST_ARGS_TPCH
     common_args = {
-        'cache_time': 10, 'cgmem_gb': 3.0,
-        'selectivity': 0.3, 'cm': 8, 'shmem': '2560MB',
+        'cache_time': 10, 'cgmem_gb': 36.0,
+        'selectivity': 0.1, 'cm': 3, 'shmem': '26624MB',
         'indexes': 'lineitem_brinonly', 'clustering': 'dates',
         'pbm4_extra_args': {'pbm_evict_use_freq': False},
-        'parallel_ops': [1, 4, 8, 16, 32],
+        'parallel_ops': [32, 64, 128][::-1],
+        
     }
 
     if ssd:  # SSD tests
         # Compare different branches
-        run_tests('parallelism_micro_seqscans_1',
-                  test_micro_parallelism(rand_seeds[5:6], **common_args, **SSD_HOST_ARGS, nsamples=[1, 10, 100],
-                                         branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))  # , BRANCH_PBM4
+        run_tests('VARIABLE_TIME',
+                  test_micro_parallelism(rand_seeds[7:12], **common_args, **SSD_HOST_ARGS, nsamples=[1, 10, 20, 100],
+                                         branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2], sf=100))  # , BRANCH_PBM4
 
-        # Try PBM-sampling with different #s of samples
-        run_tests('parallelism_micro_seqscans_1',
-                  test_micro_parallelism(rand_seeds[5:6], **common_args, **SSD_HOST_ARGS, nsamples=[2, 5, 20],
-                                         branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
+        # # Try PBM-sampling with different #s of samples
+        # run_tests('parallelism_micro_seqscans_1',
+        #           test_micro_parallelism(rand_seeds[5:6], **common_args, **SSD_HOST_ARGS, nsamples=[2, 5, 20],
+        #                                  branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
 
-        # Try PBM-sampling with multi-eviction
-        run_tests('parallelism_micro_seqscans_1',
-                  test_micro_parallelism(rand_seeds[5:6], **common_args, **SSD_HOST_ARGS, nsamples=[10],  nvictims=10,
-                                         branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
+        # # Try PBM-sampling with multi-eviction
+        # run_tests('parallelism_micro_seqscans_1',
+        #           test_micro_parallelism(rand_seeds[5:6], **common_args, **SSD_HOST_ARGS, nsamples=[10],  nvictims=10,
+        #                                  branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
     else:  # HDD tests
-        # Compare different branches
-        run_tests('parallelism_micro_seqscans_hdd_1',
-                  test_micro_parallelism(rand_seeds[5:5], **common_args, **HDD_HOST_ARGS_TPCH, nsamples=[1, 10, 100],
-                                         branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
+        pass
+        # # Compare different branches
+        # run_tests('parallelism_micro_seqscans_hdd_1',
+        #           test_micro_parallelism(rand_seeds[5:5], **common_args, **HDD_HOST_ARGS_TPCH, nsamples=[1, 10, 100],
+        #                                  branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
 
-        # same experiment from RAM (i.e. no cgroup)
-        common_args['cgmem_gb'] = None
-        run_tests('parallelism_micro_seqscans_ram_1',
-                  test_micro_parallelism(rand_seeds[5:5], **common_args, **HDD_HOST_ARGS_TPCH, nsamples=[1, 10, 100],
-                                         branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
+        # # same experiment from RAM (i.e. no cgroup)
+        # common_args['cgmem_gb'] = None
+        # run_tests('parallelism_micro_seqscans_ram_1',
+        #           test_micro_parallelism(rand_seeds[5:5], **common_args, **HDD_HOST_ARGS_TPCH, nsamples=[1, 10, 100],
+        #                                  branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
 
 
 def test_micro_trailing_idx():
@@ -734,11 +736,6 @@ def test_micro_seq_index_scans():
 
 
 
-<<<<<<< HEAD
-<<<<<<< Updated upstream
-=======
-=======
->>>>>>> mine
 def test_micro_base_ALT(work: CountedWorkloadConfig, seeds: List[Optional[int]], selectivity: float, ssd: bool, *,
                     cm=8, parallel_ops: List[int] = None, nsamples: List[int] = None, nvictims: int = 1,
                     cache_time: Optional[float] = None, branches: List[PgBranch] = None,
@@ -809,11 +806,7 @@ def test_micro_parallelism_ALT(seeds: List[Optional[int]], selectivity: Optional
                            extra_pg_args: dict = None, pbm4_extra_args: dict = None, sf=10) \
         -> Iterable[ExperimentConfig]:
     print(f"Returning the iterator for test_micro_parallelism")
-<<<<<<< HEAD
     workload = WeightedWorkloadConfig('micro_w', TPCH, weights='0,'*22 + '50,50,0', time_s=30*60)
-=======
-    workload = WeightedWorkloadConfig('micro_w', TPCH, weights='0,'*22 + '50,50,0', time_s=4*60*60)
->>>>>>> mine
     # workload = CountedWorkloadConfig('micro_c', TPCH, counts=[0]*22 + [1, 1, 0], time_s=60, warmup_s=0) # Q1alt and Q6alt
     return test_micro_base_ALT(workload, seeds, selectivity, ssd=ssd,
                            cm=cm, parallel_ops=parallel_ops, nsamples=nsamples, nvictims=nvictims,
@@ -852,11 +845,7 @@ def test_micro_seqscans_ALT(ssd=True):
     # host_args = SSD_HOST_ARGS if ssd else HDD_HOST_ARGS_TPCH
     common_args = {
         'cache_time': 10, 'cgmem_gb': 36.0,
-<<<<<<< HEAD
         'selectivity': 0.1, 'cm': 8, 'shmem': '26624MB',
-=======
-        'selectivity': 0.3, 'cm': 8, 'shmem': '26624MB',
->>>>>>> mine
         'indexes': 'lineitem_brinonly', 'clustering': 'dates',
         'pbm4_extra_args': {'pbm_evict_use_freq': False},
         'parallel_ops': [64][::-1],
@@ -867,7 +856,6 @@ def test_micro_seqscans_ALT(ssd=True):
         # Compare different branches
 
         # branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3]
-<<<<<<< HEAD
         # branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2]
         # branches = [BRANCH_PBM2]
         # branches = [BRANCH_POSTGRES_BASE] # Do the clock sweep only
@@ -883,19 +871,8 @@ def test_micro_seqscans_ALT(ssd=True):
 
         # # # Try PBM-sampling with different #s of samples
         # Figure 6
-=======
-        branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2]
-        # branches = [BRANCH_PBM2]
-        # branches = [BRANCH_POSTGRES_BASE] # Do the clock sweep only
-        # branches = [BRANCH_POSTGRES_BASE, BRANCH_PBM2]
-        nsamples = [1, 10]
-        
-        run_tests('parallelism_micro_seqscans_ALT_1',
-                  test_micro_parallelism_ALT(rand_seeds[7:10], **common_args, **SSD_HOST_ARGS, nsamples=nsamples,
-                                         branches=branches, sf=100))  # , BRANCH_PBM4
 
         # # # Try PBM-sampling with different #s of samples
->>>>>>> mine
         # run_tests('parallelism_micro_seqscans_ALT_1',
         #           test_micro_parallelism(rand_seeds[5:6], **common_args, **SSD_HOST_ARGS, nsamples=[2, 10, 100],
         #                                  branches=[BRANCH_PBM2, ],))  # BRANCH_PBM3, BRANCH_PBM4
@@ -917,15 +894,6 @@ def test_micro_seqscans_ALT(ssd=True):
         #           test_micro_parallelism(rand_seeds[5:5], **common_args, **HDD_HOST_ARGS_TPCH, nsamples=[1, 10, 100],
         #                                  branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], ))
 
-
-
-
-
-
-<<<<<<< HEAD
->>>>>>> Stashed changes
-=======
->>>>>>> mine
 
 """
 Main entry point: run the specified experiments in the order given

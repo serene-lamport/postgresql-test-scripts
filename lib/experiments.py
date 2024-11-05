@@ -775,7 +775,8 @@ def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
 def prewarm_lineitem(data: DbData, dbhost: str):
     """Prewarm lineitem cache for the given database config (DB must be running)
     """
-    # print('PREWARMING IS DISABLED, MAKE SURE TO ENABLE IT IN THE CODE!')
+    print('PREWARMING IS DISABLED, MAKE SURE TO ENABLE IT IN THE CODE!')
+    return
     with pg.open(data.conn_str(dbhost)) as conn:
         conn: PgConnection
         conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
@@ -910,18 +911,23 @@ def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
             '-c', str(temp_bbase_config),
             '--execute=true',
             '-d', str(exp.results_bbase_subdir),
+            '-im', str(1000 * 60 * 10), 
+            # '-s', str(1000 * 10)
         ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres', stdout=subprocess.PIPE)
         
         if wait_for_bbase: 
             benchbase_process.wait()
         else: 
             print('started benchbase')
-            for line in io.TextIOWrapper(benchbase_process.stdout, encoding='utf-8'):
-                print(line, end='\n')
-                if 'Waiting for all terminals to finish' in line: 
-                    print('Benchbase is DONE')
-                    break 
-        
+            with open(exp.results_dir / 'benchbase.log', 'w') as fp:
+                for line in io.TextIOWrapper(benchbase_process.stdout, encoding='utf-8'):
+                    print(line)
+                    fp.write(line)
+                    fp.flush(   )
+                    if 'Waiting for all terminals to finish' in line: 
+                        print('Benchbase is DONE')
+                        break 
+            
         collect_pg_stats(dbconf.data, db_host, exp.results_dir)    
         print("Control out of the loop")
         # get & return iostats after the test
@@ -1444,7 +1450,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
         tpcc_restore_data_dir(dbconf)
 
     # Actually run the tests
-    pre_stats, post_stats = run_bbase_test(exp_config, wait_for_bbase=False)
+    pre_stats, post_stats = run_bbase_test(exp_config, wait_for_bbase=True)
     
     # rename_bbase_results(exp_config.results_bbase_subdir)
     # store IO stats in the results
