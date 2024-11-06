@@ -53,7 +53,10 @@ def read_csv_file(file: Path, group_by: str, lambdas: Dict[str, Callable]=dict()
                 try: 
                     row[k] = float(v)
                 except ValueError: 
-                    pass
+                    if v == '': 
+                        row[k] = 0
+                    else: 
+                        print(f"Could not convert {v} to int or float")
                 
         # do the grouping
         key = row[group_by]
@@ -68,6 +71,16 @@ def read_csv_file(file: Path, group_by: str, lambdas: Dict[str, Callable]=dict()
             
     return res
 
+def get_label(branch: str, samples: int) -> str: 
+    if branch == 'base': 
+        return "Clock Sweep"
+    if branch == 'pbm1': 
+        return "PQ"
+    if branch == 'pbm2': 
+        return f"PBM {samples}"
+    else:
+        return"TODOFROMCONSOLIDATE"
+    
 def collect(res_subdir: Path) -> Dict[str, dict]: 
     
     res = dict()
@@ -75,11 +88,21 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
     # only get the directories in res_subdir and ignore the files:
     exp_dirs = [d for d in os.listdir(res_subdir) if os.path.isdir(res_subdir / d)]
     
+    kb = 1024
+    mb = 1024 * kb
+    gb = 1024 * mb
+    blk_size = 8 * kb    
+    
     for exp_dir in exp_dirs: 
         exp_id = str(exp_dir)
         exp_dir = res_subdir / exp_dir
         exp_res = {
-            "config": read_json_file(exp_dir / 'test_config.json'),
+            "config": read_json_file(
+                exp_dir / 'test_config.json', 
+                lambdas={
+                    "label": lambda data: get_label(data['branch'], data['pbm_evict_num_samples'])
+                }
+            ),
             "iostats": read_json_file(
                 exp_dir / 'iostats.json', 
                 lambdas={
@@ -108,6 +131,12 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
                 'relname', 
                 lambdas={
                     "hit_rate": lambda row: row["heap_blks_hit"] / (row["heap_blks_hit"] + row["heap_blks_read"]),
+                    "total_io_read_blks": lambda row: row["heap_blks_read"] + row["idx_blks_read"],
+                    "total_io_read_bytes": lambda row: row["total_io_read_blks"] * blk_size,
+                    "total_read_blks": lambda row: row["total_io_read_blks"] + row["idx_blks_hit"] + row["heap_blks_hit"],
+                    "total_read_bytes": lambda row: row["total_read_blks"] * blk_size,
+                    "total_hit_blks": lambda row: row["idx_blks_hit"] + row["heap_blks_hit"],
+                    "total_miss_blks": lambda row: row["total_read_blks"] - row["total_hit_blks"],
                 }
             )
             

@@ -158,8 +158,8 @@ class WeightedWorkloadConfig(WorkloadConfig):
 class CountedWorkloadConfig(WorkloadConfig):
     """Benchbase workload where each query is run a certain number of times (from each worker)"""
     counts: List[int]
-    time_s: int = BBASE_TIME
-    warmup_s: int = BBASE_WARMUP_TIME
+    # time_s: int = BBASE_TIME
+    # warmup_s: int = BBASE_WARMUP_TIME
     count_multiplier: int = 1
     randomized: bool = True
 
@@ -181,8 +181,8 @@ class CountedWorkloadConfig(WorkloadConfig):
         ET.SubElement(work_element, 'randomize').text = str(self.randomized)
         # ET.SubElement(work_element, 'warmup').text = '0'
         ET.SubElement(work_element, 'counts').text = ','.join(str(c * self.count_multiplier) for c in self.counts)
-        ET.SubElement(work_element, 'time').text = str(self.time_s)
-        ET.SubElement(work_element, 'warmup').text = str(self.warmup_s)
+        # ET.SubElement(work_element, 'time').text = str(self.time_s)
+        # ET.SubElement(work_element, 'warmup').text = str(self.warmup_s)
 
     def to_config_map(self) -> dict:
         return {
@@ -192,8 +192,8 @@ class CountedWorkloadConfig(WorkloadConfig):
             # specific to this workload type:
             'count_multiplier': self.count_multiplier,
             'query_order_randomized': self.randomized,
-            'time': self.time_s,
-            'warmup': self.warmup_s
+            # 'time': self.time_s,
+            # 'warmup': self.warmup_s
         }
 
 
@@ -775,8 +775,8 @@ def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
 def prewarm_lineitem(data: DbData, dbhost: str):
     """Prewarm lineitem cache for the given database config (DB must be running)
     """
-    print('PREWARMING IS DISABLED, MAKE SURE TO ENABLE IT IN THE CODE!')
-    return
+    # print('PREWARMING IS DISABLED, MAKE SURE TO ENABLE IT IN THE CODE!')
+    # return
     with pg.open(data.conn_str(dbhost)) as conn:
         conn: PgConnection
         conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
@@ -845,7 +845,7 @@ def create_bbase_config(sf: int, bb_config: BBaseConfig, out, host):
 
 def run_bbase_load(b: str, config: Path, create=False):
     """Run BenchBase to load data with the given config file path."""
-
+    print(f"Running BenchBase to load data with config file {config}")
     ops = ['--load=true']
     if create:
         ops.append('--create=true')
@@ -900,7 +900,7 @@ def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
         with FabConnection(db_host) as conn:
             pre_stats = get_remote_disk_stats(conn, dbconf)
 
-        
+        print(f"Starting BenchBase with config {temp_bbase_config}")
         benchbase_process = subprocess.Popen([
             'numactl', 
             '--membind=0', 
@@ -916,6 +916,10 @@ def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
         ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres', stdout=subprocess.PIPE)
         
         if wait_for_bbase: 
+            with open(exp.results_dir / 'benchbase.log', 'w') as fp:
+                for line in io.TextIOWrapper(benchbase_process.stdout, encoding='utf-8'):
+                    fp.write(line)
+                    fp.flush()
             benchbase_process.wait()
         else: 
             print('started benchbase')

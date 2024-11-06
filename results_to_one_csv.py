@@ -24,6 +24,7 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
         
     interesting_keys = {
         'branch': 'config.branch', 
+        'label': 'config.label',
         'samples': 'config.pbm_evict_num_samples',
         'seed': 'config.seed',
         'selectivity': 'config.selectivity',
@@ -36,6 +37,12 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
         'idx_blks_hit': 'pg_statio_user_tables.lineitem.idx_blks_hit',
         'idx_blks_read': 'pg_statio_user_tables.lineitem.idx_blks_read',
         'blk_read_time': 'pg_stat_database.TPCH_100.blk_read_time',
+        'total_io_read_blks': 'pg_statio_user_tables.lineitem.total_io_read_blks',
+        'total_io_read_bytes': 'pg_statio_user_tables.lineitem.total_io_read_bytes',
+        'total_read_blks': 'pg_statio_user_tables.lineitem.total_read_blks',
+        "total_read_bytes": 'pg_statio_user_tables.lineitem.total_read_bytes',
+        'total_hit_blks': 'pg_statio_user_tables.lineitem.total_hit_blks',
+        'total_miss_blks': 'pg_statio_user_tables.lineitem.total_miss_blks',
     }
         
     out = []

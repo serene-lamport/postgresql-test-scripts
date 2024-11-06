@@ -595,7 +595,6 @@ def test_micro_seqscans(ssd=True):
         'indexes': 'lineitem_brinonly', 'clustering': 'dates',
         'pbm4_extra_args': {'pbm_evict_use_freq': False},
         'parallel_ops': [32, 64, 128][::-1],
-        
     }
 
     if ssd:  # SSD tests
@@ -820,7 +819,7 @@ def test_micro_parallelism_ALT(seeds: List[Optional[int]], selectivity: Optional
     
 
 
-def test_small_tpch(): 
+def test_small_tpch(sf): 
     common_args = {
         'cache_time': 10, 'cgmem_gb': 220.0,
         'selectivity': 0.3, 'cm': 8, 'shmem': '180GB',
@@ -833,7 +832,7 @@ def test_small_tpch():
     run_tests('small_tpch', 
               test_micro_parallelism_ALT(
                   rand_seeds[5:6], **common_args, **SSD_HOST_ARGS, nsamples=[1], 
-                  branches=branches, sf=100
+                  branches=branches, sf=sf
               )
               )
  
@@ -909,7 +908,7 @@ if __name__ == '__main__':
         "tpch": test_tpch,
         "tpch_brinonly": test_tpch_brinonly,
         "tpch_sameorder": lambda: test_tpch(randomize=False),
-	    "small_tpch": lambda: test_small_tpch() # to create the indexes. Only run once after generating the data. 
+	    "small_tpch": lambda: test_small_tpch(int(sys.argv[2])) # to create the indexes. Only run once after generating the data. 
     }
 
     if len(sys.argv) <= 1:
@@ -919,11 +918,11 @@ if __name__ == '__main__':
 
 
     # check arguments first
-    for main_workload in sys.argv[1:]:
-        if main_workload.lower() in main_experiments:
-            print(f'Got workload = {main_workload}')
-        else:
-            raise Exception(f'Unknown experiment: {main_workload}')
+    # for main_workload in sys.argv[1:]:
+    #     if main_workload.lower() in main_experiments:
+    #         print(f'Got workload = {main_workload}')
+    #     else:
+    #         raise Exception(f'Unknown experiment: {main_workload}')
 
     # run the specified workload(s) in order
     for main_workload in sys.argv[1:]:
