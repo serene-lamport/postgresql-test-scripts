@@ -71,15 +71,56 @@ def read_csv_file(file: Path, group_by: str, lambdas: Dict[str, Callable]=dict()
             
     return res
 
-def get_label(branch: str, samples: int) -> str: 
+def get_label(branch: str, samples: int, victims: int, data) -> str: 
     if branch == 'base': 
         return "Clock Sweep"
     if branch == 'pbm1': 
         return "PQ"
     if branch == 'pbm2': 
-        return f"PBM {samples}"
+        if victims == 1 or samples == 1: 
+            return f"PBM {samples}"
+        else: 
+            return f"PBM Bulk {victims}/{samples}"
+    elif branch == 'pbm3':
+        return f"PBM {samples} (freq)"
+    
+    
+    elif branch == 'pbm4':
+        ret = f"PBM4 {samples}"
+        
+        features = []
+        if 'pbm_evict_use_freq' in data and data['pbm_evict_use_freq']: 
+            features.append("freq")
+        if 'pbm_evict_use_idx_scan' in data and data['pbm_evict_use_idx_scan']: 
+            features.append("idx")
+        if 'pbm_lru_if_not_requested' in data and data['pbm_lru_if_not_requested']: 
+            features.append("nrlru")
+            
+        return ret + " (" + ", ".join(features) + ")"
+            
+    
+    
     else:
         return"TODOFROMCONSOLIDATE"
+
+
+def read_bbase_summary(exp_dir: Path) -> dict:
+    # find a file whose name ends with "summary.json" in one of the subdirectories of exp_dir
+    for root, dirs, files in os.walk(exp_dir): 
+        for file in files: 
+            if file.endswith("summary.json"): 
+                with open(Path(root) / file, 'r') as fp: 
+                    return json.load(fp) 
+
+def get_shared_buffers_gb(shared_buffers: str) -> int:
+    if shared_buffers.endswith('GB'): 
+        return int(shared_buffers[:-2])
+    elif shared_buffers.endswith('MB'): 
+        return int(shared_buffers[:-2]) / 1024
+    elif shared_buffers.endswith('kB'): 
+        return int(shared_buffers[:-2]) / 1024 / 1024
+    else: 
+        return 0
     
 def collect(res_subdir: Path) -> Dict[str, dict]: 
     
@@ -100,7 +141,8 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
             "config": read_json_file(
                 exp_dir / 'test_config.json', 
                 lambdas={
-                    "label": lambda data: get_label(data['branch'], data['pbm_evict_num_samples'])
+                    "label": lambda data: get_label(data['branch'], data['pbm_evict_num_samples'], data['pbm_evict_num_victims'], data), 
+                    "shared_buffers_gb": lambda data: get_shared_buffers_gb(data['shared_buffers'])
                 }
             ),
             "iostats": read_json_file(
@@ -138,7 +180,8 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
                     "total_hit_blks": lambda row: row["idx_blks_hit"] + row["heap_blks_hit"],
                     "total_miss_blks": lambda row: row["total_read_blks"] - row["total_hit_blks"],
                 }
-            )
+            ),
+            "bbase_summary": read_bbase_summary(exp_dir)
             
         }
         

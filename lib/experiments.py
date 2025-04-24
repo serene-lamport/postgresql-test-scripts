@@ -720,8 +720,8 @@ def config_remote_postgres(conn: fabric.Connection, dbconf: DbConfig, pgconf: Ru
     local_temp_path = f'{db_host}_temp_pg.conf'
     remote_path = str(dbconf.data.data_path / 'postgresql.conf')
 
-    # print(f'Configuring PostgreSQL on remote host {db_host}, config file at: {remote_path}    local={local_temp_path}')
-    # print(f'dbconf = {dbconf}')
+    print(f'Configuring PostgreSQL on remote host {db_host}, config file at: {remote_path}    local={local_temp_path}')
+    print(f'dbconf = {dbconf}')
 
     conn.get(remote_path, local_temp_path)
     cf = ConfigFile(local_temp_path)
@@ -771,6 +771,12 @@ def get_remote_disk_stats(conn: fabric.Connection, case: DbConfig):
 
     return {a: b for a, b in zip(SYSBLOCKSTAT_COLS, res)}
 
+def get_statement_timeout(data: DbData, dbhost: str):
+    
+    with pg.open(data.conn_str(dbhost)) as conn:
+        conn: PgConnection
+        res = conn.execute('SHOW statement_timeout;')
+        print(res)
 
 def prewarm_lineitem(data: DbData, dbhost: str):
     """Prewarm lineitem cache for the given database config (DB must be running)
@@ -890,8 +896,13 @@ def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
     try:
         # prewarm lineitem table if desired (TPCH only)
         if bbconf.prewarm and workload.is_tpch():
+            print(f"Running query to see the value of statement_timeout")
+            get_statement_timeout(dbconf.data, db_host) 
+            
             print(f'Pre-warming cache for lineitem table...')
             prewarm_lineitem(dbconf.data, db_host)
+            
+            
 
         # Clear statistics on remote postgres
         clear_pg_stats(dbconf.data, db_host)
@@ -1422,7 +1433,7 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     print(f'==   Block group size       {dbconf.bg_size} KiB')
     print(f'==   Workload:              {bbconf.workload.workname}')
     print(f'==   Worker memory          {PG_WORK_MEM}')
-    print(f'==   Shared memory:         {pgconf.shared_buffers}   ({exp_config.cgroup.mem_gb} GB cgroup)')
+    # print(f'==   Shared memory:         {pgconf.shared_buffers}   ({exp_config.cgroup.mem_gb} GB cgroup)')
     if is_tpch:
         print(f'==   Index definitions:     ddl/index/{dbsetup.indexes}/')
         print(f'==   Clustering:            ddl/cluster/{dbsetup.clustering}.sql')
