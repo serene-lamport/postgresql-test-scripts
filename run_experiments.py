@@ -562,39 +562,6 @@ def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], d
     else:
         run_tests(e_str, not_tried)
 
-
-def test_ycsb(): 
-    workloads = [
-        WORKLOAD_YCSB_40K_QRatio0,
-        WORKLOAD_YCSB_40K_QRatio1e5, 
-        WORKLOAD_YCSB_40K_QRatio1e4,
-        WORKLOAD_YCSB_40K_QRatio1e3,
-        WORKLOAD_YCSB_40K_QRatio1e2,
-    ]
-    
-    common_args = {
-        "nsamples": [10], 
-        "cgmem_gb": 22,  # 1.5GB seems necessary for worker memory + whatever else
-        "shmem": '16GB',
-    }
-    
-    
-    for workload in workloads: 
-        run_tests(
-            'FinalizePrelimWithCgroups60', 
-            run_test_ycsb_counts(
-                rand_seeds[6:11], 
-                **common_args,
-                work=workload,
-                parallel_ops=[32],
-                sf=40_000, 
-                cm=5,
-                branches=[BRANCH_PBM2]
-            ), 
-            mk_bbase=True,
-        )
-        
-    
     
 
 def test_ycsb_playground(): 
@@ -1257,7 +1224,6 @@ if __name__ == '__main__':
         "tpch_brinonly": test_tpch_brinonly,
         "tpch_sameorder": lambda: test_tpch(randomize=False),
 	    "small_tpch": lambda: test_small_tpch(int(sys.argv[2])), # to create the indexes. Only run once after generating the data. 
-        "ycsb": lambda: test_ycsb(),
         "ycsb_playground": lambda: test_ycsb_playground(),
         "ycsb_playground_readratio": lambda: test_ycsb_playground_readratio(),
     }
