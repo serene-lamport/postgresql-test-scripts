@@ -30,7 +30,7 @@
 # wait until there's no process running with the name "run_experiments.py"
 while pgrep -f "run_experiments.py" > /dev/null; do
     echo "waiting for run_experiments.py to finish"
-    sleep 300
+    sleep 600
 done
 
 echo "run_experiments.py finished"
@@ -42,12 +42,9 @@ while pgrep -f "run_experiments.py" > /dev/null; do
     sleep 300
 done
 
-while pgrep -f "postgres" > /dev/null; do
-    echo "waiting for run_experiments.py to finish"
-    sleep 300
-done
 
-echo "run_experiments.py finished"
-echo "Running the next experiment"
-python3 run_experiments.py tpch
 
+mv bbase_config/sample_ycsb_config.xml bbase_config/sample_ycsb_config_0.99.xml
+mv bbase_config/sample_ycsb_config_0.75.xml bbase_config/sample_ycsb_config.xml
+
+./run_experiments.py ycsb_playground_readratio

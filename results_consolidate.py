@@ -29,6 +29,12 @@ from typing import List, Dict, Callable
 
 
 def read_json_file(file: Path, lambdas: Dict[str, Callable]=dict()) -> dict:
+    
+    # if file doesn't exist, return an empty dict
+    if not file.exists():
+        print(f"File {file} does not exist, returning empty dict")
+        return {}
+    
     with open(file, 'r') as fp: 
         res = json.load(fp)
     
@@ -39,6 +45,11 @@ def read_json_file(file: Path, lambdas: Dict[str, Callable]=dict()) -> dict:
 
 
 def read_csv_file(file: Path, group_by: str, lambdas: Dict[str, Callable]=dict()) -> dict: 
+    # If the file does not exist, return an empty dict
+    if not file.exists():
+        print(f"File {file} does not exist, returning empty dict")
+        return {}
+    
     with open(file, 'r') as fp: 
         rows = list(csv.DictReader(fp))
     
@@ -111,6 +122,30 @@ def read_bbase_summary(exp_dir: Path) -> dict:
             if file.endswith("summary.json"): 
                 with open(Path(root) / file, 'r') as fp: 
                     return json.load(fp) 
+                
+def read_ycsb_query_ratio(exp_dir: Path) -> dict:
+    filepath = exp_dir / 'benchbase.log'
+    if not filepath.exists():
+        print(f"File {filepath} does not exist, returning empty dict")
+        return None
+    
+    import re 
+    # do a pattern that detects the counts array as a string: [Counts=[499950, 0, 0, 0, 0, 0, 50]] 
+    pattern = r'\[Counts=\[(\d+), (\d+), (\d+), (\d+), (\d+), (\d+), (\d+)\]\]'
+    with open(filepath, 'r') as fp:
+        content = fp.read()
+        match = re.search(pattern, content)
+        if match:
+            counts = list(map(int, match.groups()))
+            pt = counts[0]  # pt is the first element
+            seq = counts[-1]
+            return seq / (seq + pt) if (seq + pt) > 0 else 0.0
+        else: 
+            print(f"No counts found in {filepath}, returning empty dict")
+            return None
+    
+    
+    
 
 def get_shared_buffers_gb(shared_buffers: str) -> int:
     if shared_buffers.endswith('GB'): 
@@ -181,15 +216,16 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
                     "total_miss_blks": lambda row: row["total_read_blks"] - row["total_hit_blks"],
                 }
             ),
-            "bbase_summary": read_bbase_summary(exp_dir)
-            
+            "bbase_summary": read_bbase_summary(exp_dir),
+            "ycsb_query_ratio": read_ycsb_query_ratio(exp_dir)
         }
         
         # print(exp_res)
         for key in exp_res.keys(): 
             print(key)
-            for kk in exp_res[key].keys(): 
-                print("    ", kk)
+            if exp_res[key] and isinstance(exp_res[key], dict): 
+                for kk in exp_res[key].keys(): 
+                    print("    ", kk)
         res[exp_id] = exp_res
     
     
@@ -204,6 +240,7 @@ def collect(res_subdir: Path) -> Dict[str, dict]:
 
 
 if __name__ == '__main__':
-    res_dir = Path(RESULTS_ROOT) 
+    # res_dir = Path(RESULTS_ROOT) 
+    res_dir = Path('/home/mkhalaji/pbm/build_root/results')
     res_subdir = res_dir / sys.argv[1]
     collect(res_subdir)

@@ -81,6 +81,12 @@ class Workload:
 
     def is_tpch(self):
         return self.name.upper() == 'TPCH'
+    
+    def is_tpcc(self):
+        return self.name.upper() == 'TPCC'
+    
+    def is_ycsb(self):
+        return self.name.upper() == 'YCSB'
 
 
 @dataclass
@@ -178,7 +184,7 @@ class CountedWorkloadConfig(WorkloadConfig):
     def write_bbase_config(self, work_element: ET.Element):
         ET.SubElement(work_element, 'rate').text = 'unlimited'
         ET.SubElement(work_element, 'arrival').text = 'regular'
-        ET.SubElement(work_element, 'randomize').text = str(self.randomized)
+        ET.SubElement(work_element, 'randomize').text = str(self.randomized).lower() # 'true' or 'false'
         # ET.SubElement(work_element, 'warmup').text = '0'
         ET.SubElement(work_element, 'counts').text = ','.join(str(c * self.count_multiplier) for c in self.counts)
         # ET.SubElement(work_element, 'time').text = str(self.time_s)
@@ -200,6 +206,7 @@ class CountedWorkloadConfig(WorkloadConfig):
 # The available workloads
 TPCH = Workload('tpch', 'bbase_config/sample_tpch_config.xml', PG_HOST_TPCH, PG_DATA_DEVICE)
 TPCC = Workload('tpcc', 'bbase_config/sample_tpcc_config.xml', PG_HOST_TPCC, PG_DATA_DEVICE)
+YCSB = Workload('ycsb', 'bbase_config/sample_ycsb_config.xml', PG_HOST_YCSB, PG_DATA_DEVICE)
 
 # queries 17 and 20 are extremely slow, 18 and 21 are moderately slow.
 WORKLOAD_TPCH_WEIGHTS = WeightedWorkloadConfig('tpch_w', TPCH, weights='1,'*16 + '0,'*6 + '0,0,0', time_s=BBASE_TIME)
@@ -208,6 +215,44 @@ WORKLOAD_TPCH_COUNTS = CountedWorkloadConfig('tpch_c', TPCH, counts=[1]*16 + [0]
 WORKLOAD_MICRO_COUNTS = CountedWorkloadConfig('micro_c', TPCH, counts=[0]*22 + [1, 1, 0]) # Q1alt and Q6alt
 WORKLOAD_MICRO_IDX_COUNTS = CountedWorkloadConfig('microidx_c', TPCH, counts=[0]*22 + [0, 0, 1])
 WORKLOAD_TPCC = WeightedWorkloadConfig('tpcc', TPCC, weights='45,43,4,4,4', time_s=BBASE_TIME, warmup_s=BBASE_WARMUP_TIME)
+
+
+YCSB_TIME = 5 * 60 # 5 minutes
+YCSB_WARMUP_TIME = 0
+WORKLOAD_YCSB = WeightedWorkloadConfig('ycsb', YCSB, weights='50,0,0,0,0,0,50', time_s=YCSB_TIME, warmup_s=YCSB_WARMUP_TIME)
+
+WORKLOAD_YCSB_COUNTS_EQUAL = CountedWorkloadConfig('ycsb', YCSB, counts=[5,0,0,0,0,0,5]).randomize(True)
+WORKLOAD_YCSB_COUNTS_MORE_POINT_READS = CountedWorkloadConfig('ycsb', YCSB, counts=[8,0,0,0,0,0,2]).randomize(True)
+WORKLOAD_YCSB_COUNTS_MORE_SEQ_SCANS = CountedWorkloadConfig('ycsb', YCSB, counts=[2,0,0,0,0,0,8]).randomize(True)
+WORKLOAD_YCSB_MORE_PT = CountedWorkloadConfig('ycsb', YCSB, counts=[19*21000,0,0,0,0,0,1]).randomize(True)
+
+YCSB_40K_PAGE_COUNT = 5714286
+YCSB_40K_AVG_SELECTIVITY = (50) / 1000
+YCSB_40K_SEQ_PAGE_COUNT = int(YCSB_40K_PAGE_COUNT * YCSB_40K_AVG_SELECTIVITY)
+
+WORKLOAD_YCSB_40K_ReadRatio0 = CountedWorkloadConfig('ycsb', YCSB, counts=[10*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,0]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio10 = CountedWorkloadConfig('ycsb', YCSB, counts=[9*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,1]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio20 = CountedWorkloadConfig('ycsb', YCSB, counts=[8*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,2]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio30 = CountedWorkloadConfig('ycsb', YCSB, counts=[7*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,3]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio40 = CountedWorkloadConfig('ycsb', YCSB, counts=[6*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,4]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio50 = CountedWorkloadConfig('ycsb', YCSB, counts=[5*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,5]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio60 = CountedWorkloadConfig('ycsb', YCSB, counts=[4*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,6]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio70 = CountedWorkloadConfig('ycsb', YCSB, counts=[3*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,7]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio80 = CountedWorkloadConfig('ycsb', YCSB, counts=[2*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,8]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio90 = CountedWorkloadConfig('ycsb', YCSB, counts=[1*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,9]).randomize(True)
+WORKLOAD_YCSB_40K_ReadRatio100 = CountedWorkloadConfig('ycsb', YCSB, counts=[0*YCSB_40K_SEQ_PAGE_COUNT,0,0,0,0,0,10]).randomize(True)
+
+
+
+
+TTSIX = 1000000
+WORKLOAD_YCSB_40K_QRatio0e6 = CountedWorkloadConfig('ycsb', YCSB, counts=[int(1 * TTSIX),0,0,0,0,0,int(0 * TTSIX)]).randomize(True)
+WORKLOAD_YCSB_40K_QRatio1e6 = CountedWorkloadConfig('ycsb', YCSB, counts=[int(0.999999 * TTSIX),0,0,0,0,0,int(0.000001 * TTSIX)]).randomize(True)
+WORKLOAD_YCSB_40K_QRatio2e6 = CountedWorkloadConfig('ycsb', YCSB, counts=[int(0.999998 * TTSIX),0,0,0,0,0,int(0.000002 * TTSIX)]).randomize(True)
+WORKLOAD_YCSB_40K_QRatio4e6 = CountedWorkloadConfig('ycsb', YCSB, counts=[int(0.999996 * TTSIX),0,0,0,0,0,int(0.000004 * TTSIX)]).randomize(True)
+WORKLOAD_YCSB_40K_QRatio8e6 = CountedWorkloadConfig('ycsb', YCSB, counts=[int(0.999992 * TTSIX),0,0,0,0,0,int(0.000008 * TTSIX)]).randomize(True)
+WORKLOAD_YCSB_40K_QRatio16e6 = CountedWorkloadConfig('ycsb', YCSB, counts=[int(0.999984 * TTSIX),0,0,0,0,0,int(0.000016 * TTSIX)]).randomize(True)
+
 
 
 WORKLOADS_MAP: Dict[str, WorkloadConfig] = {c.workname: c for c in [
@@ -364,7 +409,7 @@ class RuntimePgConfig:
     synchronize_seqscans: str = 'on'
     track_io_timing: str = 'off'
     work_mem: str = PG_WORK_MEM
-    max_connections: int = 150
+    max_connections: int = 300
     max_prepared_transactions: int = 0
     # Optimizer cost estimation
     seq_page_cost: Optional[float] = None
@@ -658,20 +703,20 @@ def clean_postgres(dbbin: DbBin):
         raise Exception(f'Got return code {ret} when cleaning postgres {brnch.name} with block size={dbbin.block_size}, group size={dbbin.bg_size}')
 
 
-def build_benchbase():
+def build_benchbase(bbase_src_path=BENCHBASE_SRC_PATH):
     """Compile BenchBase."""
     ret = subprocess.Popen([
-        BENCHBASE_SRC_PATH / 'mvnw',
+        bbase_src_path / 'mvnw',
         'clean', 'package',
         '-P', 'postgres',
         '-DskipTests'
-    ], cwd=BENCHBASE_SRC_PATH).wait()
+    ], cwd=bbase_src_path).wait()
     if ret != 0:
         raise Exception(f'Got return code {ret} when compiling benchbase')
 
 
-def install_benchbase():
-    shutil.unpack_archive(BENCHBASE_SRC_PATH / 'target' / 'benchbase-postgres.tgz', BENCHBASE_INSTALL_PATH, 'gztar')
+def install_benchbase(bbase_src_path=BENCHBASE_SRC_PATH, bbase_install_path=BENCHBASE_INSTALL_PATH):
+    shutil.unpack_archive(bbase_src_path / 'target' / 'benchbase-postgres.tgz', bbase_install_path, 'gztar')
 
 
 def pg_get_cluster(case: DbConfig) -> Cluster:
@@ -709,6 +754,7 @@ def pg_init_local_db(cl: Cluster):
         'port': PG_PORT,
         'shared_buffers': '220GB', # to have larger buffer while creating the data
         'work_mem': PG_WORK_MEM,
+        'max_connections': '300',
     })
 
 
@@ -748,9 +794,33 @@ def start_remote_postgres(conn: fabric.Connection, case: DbConfig, cgroup: CGrou
     start_cmd = f'numactl --physcpubind=64-127,192-255 --membind=1 {pgctl} start -D {data_dir} -l {logfile}'
     # start_cmd = f"{pgctl} start -D {data_dir} -l {logfile}"
     if cgroup is not None:
-        conn.run(f'cgset -r memory.limit_in_bytes={cgroup.mem_bytes} {cgroup.name}')
-        start_cmd = f'cgexec -g memory:{cgroup.name} {start_cmd}'
-    conn.run(start_cmd)
+        
+        # Cgroup v1
+        # conn.run(f'cgset -r memory.limit_in_bytes={cgroup.mem_bytes} {cgroup.name}')
+        # start_cmd = f'cgexec -g memory:{cgroup.name} {start_cmd}'
+        
+        # Cgroup v2
+        # Remove cgroup if it already exists
+        # conn.run(f'sudo mkdir -p /sys/fs/cgroup/{cgroup.name}') # so rmdir doesn't fail
+        # conn.run(f'sudo rmdir /sys/fs/cgroup/{cgroup.name}')
+        
+        
+        conn.run(f'sudo mkdir -p /sys/fs/cgroup/{cgroup.name}')
+        conn.run(f'echo "+memory" | sudo tee /sys/fs/cgroup/{cgroup.name}/cgroup.subtree_control')
+        
+        # Create the subgroup: 
+        conn.run(f'sudo mkdir -p /sys/fs/cgroup/{cgroup.name}/{cgroup.name}_subcgroup')
+        
+        conn.run(f'echo {cgroup.mem_bytes} | sudo tee /sys/fs/cgroup/{cgroup.name}/{cgroup.name}_subcgroup/memory.max')
+        
+        # Get the fabric conn pid 
+        # and add it to the cgroup
+        # conn_pid = conn.run('echo $PPID', hide=True).stdout.strip()
+        # conn.run(f'echo "{conn_pid}" | sudo tee /sys/fs/cgroup/{cgroup.name}/{cgroup.name}_subcgroup/cgroup.procs')
+        start_cmd = f"bash -c 'echo $$ | sudo tee /sys/fs/cgroup/{cgroup.name}/{cgroup.name}_subcgroup/cgroup.procs; exec {start_cmd}'"
+        
+    process = conn.run(start_cmd)
+
 
 
 def stop_remote_postgres(conn: fabric.Connection, case: DbConfig, immediate=False):
@@ -775,9 +845,29 @@ def get_statement_timeout(data: DbData, dbhost: str):
     
     with pg.open(data.conn_str(dbhost)) as conn:
         conn: PgConnection
-        res = conn.execute('SHOW statement_timeout;')
-        print(res)
+        res = conn.query.first('SHOW statement_timeout;')
+        print(f'PostgreSQL statement timeout: {res}')
+        
+def get_logging_level(data: DbData, dbhost: str):
+    """Get the logging level of the PostgreSQL database."""
+    with pg.open(data.conn_str(dbhost)) as conn:
+        conn: PgConnection
+        res = conn.query.first("SHOW log_min_messages;")
+        print(f'PostgreSQL logging level: {res}')
+        
+        
+        
 
+def prewarm_ycsb(data: DbData, dbhost: str):
+    """Prewarm YCSB cache for the given database config (DB must be running)
+    """
+    # print('PREWARMING IS DISABLED, MAKE SURE TO ENABLE IT IN THE CODE!')
+    # return
+    with pg.open(data.conn_str(dbhost)) as conn:
+        conn: PgConnection
+        conn.execute('CREATE EXTENSION IF NOT EXISTS pg_prewarm;')
+        conn.execute('''select pg_prewarm('usertable');''')
+        
 def prewarm_lineitem(data: DbData, dbhost: str):
     """Prewarm lineitem cache for the given database config (DB must be running)
     """
@@ -849,24 +939,29 @@ def create_bbase_config(sf: int, bb_config: BBaseConfig, out, host):
     tree.write(out)
 
 
-def run_bbase_load(b: str, config: Path, create=False):
+def run_bbase_load(b: str, config: Path, create=False, mk_bbase=False):
     """Run BenchBase to load data with the given config file path."""
     print(f"Running BenchBase to load data with config file {config}")
     ops = ['--load=true']
     if create:
         ops.append('--create=true')
 
+    
+    install_path = BENCHBASE_INSTALL_PATH
+    if mk_bbase:
+        install_path = MK_BENCHBASE_INSTALL_PATH
+    
     subprocess.Popen([
         'java',
-        '-jar', str(BENCHBASE_INSTALL_PATH / 'benchbase-postgres' / 'benchbase.jar'),
+        '-jar', str(install_path / 'benchbase-postgres' / 'benchbase.jar'),
         '-b', b,
         '-c', str(config),
         *ops,
-    ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres').wait()
+    ], cwd=install_path / 'benchbase-postgres').wait()
 
 
 
-def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
+def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True, mk_bbase=False):
     """
     Run benchbase (on local machine) against PostgreSQL on the remote host.
     Will start & stop PostgreSQL on the remote host.
@@ -888,10 +983,12 @@ def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
     create_bbase_config(dbconf.sf, bbconf, temp_bbase_config, host=db_host)
 
     with FabConnection(db_host) as conn:
+        # Create cgroup if it is specified
         config_remote_postgres(conn, dbconf, pgconf, db_host)
         start_remote_postgres(conn, dbconf, cgroup=exp.cgroup)
         # empty the buffer cache on remote host
         conn.run('echo 1 | sudo tee /proc/sys/vm/drop_caches', hide=True)
+        
 
     try:
         # prewarm lineitem table if desired (TPCH only)
@@ -899,8 +996,15 @@ def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
             print(f"Running query to see the value of statement_timeout")
             get_statement_timeout(dbconf.data, db_host) 
             
+            print(f"Running query to see the value of log_min_messages")
+            get_logging_level(dbconf.data, db_host)
+            
             print(f'Pre-warming cache for lineitem table...')
             prewarm_lineitem(dbconf.data, db_host)
+            
+        if workload.is_ycsb(): 
+            print(f'Pre-warming cache for YCSB tables...')
+            prewarm_ycsb(dbconf.data, db_host)
             
             
 
@@ -912,19 +1016,26 @@ def run_bbase_test(exp: ExperimentConfig, wait_for_bbase=True):
             pre_stats = get_remote_disk_stats(conn, dbconf)
 
         print(f"Starting BenchBase with config {temp_bbase_config}")
+        
+        install_path = BENCHBASE_INSTALL_PATH
+        if mk_bbase: 
+            install_path = MK_BENCHBASE_INSTALL_PATH
+            
         benchbase_process = subprocess.Popen([
             'numactl', 
             '--membind=0', 
             '--cpunodebind=0',
             'java',
-            '-jar', str(BENCHBASE_INSTALL_PATH / 'benchbase-postgres' / 'benchbase.jar'),
+            '-Xmx110g',
+            '-Xms32g',
+            '-jar', str(install_path / 'benchbase-postgres' / 'benchbase.jar'),
             '-b', bb_workload_name,
             '-c', str(temp_bbase_config),
             '--execute=true',
             '-d', str(exp.results_bbase_subdir),
             '-im', str(1000 * 60 * 10), 
             # '-s', str(1000 * 10)
-        ], cwd=BENCHBASE_INSTALL_PATH / 'benchbase-postgres', stdout=subprocess.PIPE)
+        ], cwd=install_path / 'benchbase-postgres', stdout=subprocess.PIPE)
         
         if wait_for_bbase: 
             with open(exp.results_dir / 'benchbase.log', 'w') as fp:
@@ -1014,6 +1125,54 @@ def create_and_populate_tpch_local(case: DbConfig):
             conn.execute('ANALYZE partsupp;')
 
     finally:
+        print(f'Shutting down database cluster {cl.data_directory}...')
+        pg_stop_db(cl)
+        
+
+def create_and_populate_ycsb_local(case: DbConfig):
+    db_name = case.data.db_name
+    create_ddl_file = 'ddl/ycsb/create-table.sql'
+    indices_sql_file = 'ddl/ycsb/handle-indexes.sql'
+    conn_str = f'pq://localhost/{db_name}'
+    
+    cl = pg_get_cluster(case)
+    
+    print(f'(Re-)Initializing database cluster at {cl.data_directory}...')
+    shutil.rmtree(cl.data_directory, ignore_errors=True)
+    pg_init_local_db(cl)
+    
+    print(f'Starting cluster and creating database {db_name} with tables (defined in {create_ddl_file}) on local host...')
+    pg_start_db(cl)
+    try: 
+        subprocess.run([case.bin.install_path / 'bin' / 'createdb', db_name])
+        with pg.open(conn_str) as conn:
+            conn: PgConnection  # explicitly set type hint since type deduction fails here...
+            pg_exec_file(conn, create_ddl_file)
+            # disable autovacuum and WAL for the large tables while loading
+            print('Disabling VACUUM on large tables for loading...')
+            conn.execute('ALTER TABLE usertable SET (autovacuum_enabled = off);')
+
+        print(f'MK BenchBase: loading test data...')
+        bbase_config_file = BUILD_ROOT / 'ycsb_load_config.xml'
+        bbconf = BBaseConfig(nworkers=1, workload=WORKLOAD_YCSB)
+        create_bbase_config(case.sf, bbconf, bbase_config_file, host='localhost')
+        run_bbase_load('ycsb', bbase_config_file, create=False, mk_bbase=True)
+        
+        with pg.open(conn_str) as conn:
+            conn: PgConnection
+            # Create indexes if specified
+            print('Creating indexes from the sql file')
+            pg_exec_file(conn, indices_sql_file)
+            
+    
+        with pg.open(conn_str) as conn:
+            conn: PgConnection
+            # Re-enable autovacuum
+            print('Re-enable auto vacuum...')
+            conn.execute('ALTER TABLE usertable SET (autovacuum_enabled = on);')
+            print('ANALYZE large tables...')
+            conn.execute('ANALYZE usertable;')
+    finally: 
         print(f'Shutting down database cluster {cl.data_directory}...')
         pg_stop_db(cl)
 
@@ -1210,6 +1369,16 @@ def one_time_pg_setup():
                 build_postgres(dbbin)
 
 
+def one_time_pg_setup_pbmfreq(): 
+    """Build the pbm freq branch only
+    """
+    
+    for blk_sz in PG_BLK_SIZES:
+        for bg_size in BLOCK_GROUP_SIZES:
+            dbbin = DbBin(branch=BRANCH_PBM3, block_size=blk_sz, bg_size=bg_size)
+            config_postgres_repo(dbbin)
+            build_postgres(dbbin)
+
 def refresh_pg_installs():
     """Update all git worktrees and rebuild postgress for each configuration.
     Run on the server host.
@@ -1264,11 +1433,15 @@ def clean_pg_installs(base=False):
                 clean_postgres(dbbin)
 
 
-def one_time_benchbase_setup():
+def one_time_benchbase_setup(mk_benchbase=False):
     """Build and install BenchBase on current host."""
-    clone_benchbase_repo()
-    build_benchbase()
-    install_benchbase()
+    if mk_benchbase: 
+        build_benchbase(bbase_src_path=MK_BENCHBASE_SRC_PATH)
+        install_benchbase(bbase_src_path=MK_BENCHBASE_SRC_PATH, bbase_install_path=MK_BENCHBASE_INSTALL_PATH)
+    else: 
+        clone_benchbase_repo()
+        build_benchbase()
+        install_benchbase()
 
 
 def gen_data_tpch(sf: int, blk_sz: int, data_root: Optional[str]):
@@ -1301,6 +1474,22 @@ def gen_data_tpcc(sf: int, blk_sz: int):
     dbconf = DbConfig(dbbin, dbdata)
     create_and_populate_tpcc_local(dbconf)
 
+
+def gen_data_ycsb(sf: int, blk_sz: int, data_root: Optional[str]):
+    if sf is None:
+        raise Exception(f'Must specify scale factor when loading data!')
+
+    # Generate test data (only base branch is needed for generating data)
+    print('--------------------------------------------------------------------------------')
+    print(f'---- Initializing YCSB data for blk_sz={blk_sz}, sf={sf}, dir={data_root}')
+    print('--------------------------------------------------------------------------------')
+    if data_root is not None:
+        dbdata = DbData(YCSB, sf=sf, block_size=blk_sz, data_root=Path(data_root))
+    else:
+        dbdata = DbData(YCSB, sf=sf, block_size=blk_sz)
+    dbbin = DbBin(BRANCH_POSTGRES_BASE, block_size=blk_sz)
+    dbconf = DbConfig(dbbin, dbdata)
+    create_and_populate_ycsb_local(dbconf)
 
 def drop_all_indexes_tpch(sf: int, blk_sz: int, db_host: str):
     """Drop all indexes and constraints. More powerful cleanup function if something goes really wrong."""
@@ -1387,7 +1576,7 @@ def reindex(args):
     setup_indexes_cluster_tpch(dbconf=conf, db_host=host, prev=prev_setup, new=new_setup)
 
 
-def run_experiment(experiment: str, exp_config: ExperimentConfig):
+def run_experiment(experiment: str, exp_config: ExperimentConfig, mk_bbase=False):
     dbconf = exp_config.dbconf
     bbconf = exp_config.bbconf
     pgconf = exp_config.pgconf
@@ -1396,13 +1585,18 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
     sf = dbconf.sf
     blk_sz = dbconf.block_size
     is_tpch = bbconf.workload.workload.is_tpch()
+    is_tpcc = bbconf.workload.workload.is_tpcc()
+    is_ycsb = bbconf.workload.workload.is_ycsb()
 
     # Check current status of indexes & clustering in the database
     if is_tpch:
         prev_setup: DbSetup = get_last_config(dbconf.to_config_key(exp_config.db_host))
         dbsetup = dbsetup.update_with_old(prev_setup)
         dbsetup_dict = asdict(dbsetup)
-    else:
+    elif is_tpcc:
+        dbsetup_dict = {}
+    elif is_ycsb: 
+        # YCSB does not use indexes or clustering
         dbsetup_dict = {}
 
     # Write configuration to a file
@@ -1460,12 +1654,14 @@ def run_experiment(experiment: str, exp_config: ExperimentConfig):
             indexes.to_csv(f, index=False)
 
         print(f'~~~~~~~~~~ Index and clustering setup done! Running the real tests... ~~~~~~~~~~')
-    else:
+    elif is_tpcc:
         # for TPCC: need to copy the database file!
         tpcc_restore_data_dir(dbconf)
+    elif is_ycsb: 
+        pass
 
     # Actually run the tests
-    pre_stats, post_stats = run_bbase_test(exp_config, wait_for_bbase=True)
+    pre_stats, post_stats = run_bbase_test(exp_config, wait_for_bbase=True, mk_bbase=mk_bbase)
     
     # rename_bbase_results(exp_config.results_bbase_subdir)
     # store IO stats in the results

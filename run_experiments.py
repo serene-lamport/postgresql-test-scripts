@@ -18,7 +18,7 @@ NUM_EXPERIMENTS_RUN: int = 0
 rand_seeds = [16312, 22289, 16987, 6262, 32495, 5786, 24267, 3636, 9774, 19740, 4448, 19357, 15930, 3127, 4385, 6870, 27272, 14943, 13146, 32540]
 
 
-def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, skip=0, dry_run=False):
+def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, skip=0, dry_run=False, mk_bbase=False):
     """
     Run a set of experiments.
 
@@ -47,7 +47,7 @@ def run_tests(exp_name: str, tests: Iterable[ExperimentConfig], /, skip=0, dry_r
         if dry_run:
             print(f'EXPERIMENT: {exp.dbconf = }  {exp.pgconf = }')
         else:
-            run_experiment(exp_name, exp)
+            run_experiment(exp_name, exp, mk_bbase=mk_bbase)
 
         end = dt.now()
         ts_str = end.strftime('%H:%M:%S')
@@ -212,6 +212,86 @@ def test_tpcc(seeds: List[int], nsamples: List[int] = None, shmem='2560MB', cgme
 
             yield ExperimentConfig(pgconf, dbconf, None, bbconf, cgroup=cgroup, db_host=ssd_host if use_ssd else None)
 
+def run_test_ycsb_weights(seeds: List[int], *,
+                  nsamples: List[int], nvictims: int = 1,
+                  branches: List[PgBranch], parallel_ops: List[int],
+                  shmem: str, cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
+                  extra_pg_args: dict = None, pbm4_extra_args: dict = None,
+                  indexes='btree+brin', clustering='dates',
+                    sf=20_000
+                  ) -> Iterable[ExperimentConfig]:
+    work = WORKLOAD_YCSB
+    workload = work.workload.with_host_device(SSD_HOST_ARGS['db_host'], SSD_HOST_ARGS['data_root'][1])
+    work.workload = workload
+    
+    dbdata = DbData(workload, sf=sf, block_size=blk_sz, data_root=SSD_HOST_ARGS['data_root'][0])
+    dbsetup = DbSetup(indexes=indexes, clustering=clustering)
+    cgroup = CGroupConfig(cgmem_gb) if cgmem_gb is not None else None
+    
+    for seed, nworkers, branch in product(seeds, parallel_ops, branches):
+        dbbin = DbBin(branch, block_size=blk_sz, bg_size=bg_sz)
+        dbconf = DbConfig(dbbin, dbdata)
+        bbconf = BBaseConfig(nworkers=nworkers, seed=seed, workload=work)
+
+        for ns in branch_samples(branch, nsamples):
+            nv = nvictims if ns is not None and ns > 1 else None
+            if ns is not None and ns > 1:
+                ns = ns * nv
+                nv = nvictims
+            pgconf = RuntimePgConfig(shared_buffers=shmem,
+                                     pbm_evict_num_samples=ns,
+                                     pbm_evict_num_victims=nv,
+                                     synchronize_seqscans='on',
+                                     track_io_timing='on',
+                                     random_page_cost=1.1,  # default for SSD
+                                     **(extra_pg_args or {}),
+                                     **(pbm4_extra_args or {} if branch.idx_support else {}),
+                                     max_pred_locks_per_transaction=1024, 
+                                     work_mem='8MB',
+                                     )
+
+            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf, cgroup=cgroup, db_host=SSD_HOST_ARGS['db_host'])
+            
+
+def run_test_ycsb_counts(seeds: List[int], *, work: CountedWorkloadConfig = WORKLOAD_YCSB_COUNTS_EQUAL,
+                  nsamples: List[int], nvictims: int = 1, cm: int = 1,
+                  branches: List[PgBranch], parallel_ops: List[int],
+                  shmem: str, cgmem_gb: float = None, blk_sz=DEFAULT_BLOCK_SIZE, bg_sz=DEFAULT_BG_SIZE,
+                  extra_pg_args: dict = None, pbm4_extra_args: dict = None,
+                  indexes='btree+brin', clustering='dates',
+                    sf=20_000
+                  ) -> Iterable[ExperimentConfig]:
+    work = work.with_multiplier(cm)
+    workload = work.workload.with_host_device(SSD_HOST_ARGS['db_host'], SSD_HOST_ARGS['data_root'][1])
+    work.workload = workload
+    
+    dbdata = DbData(workload, sf=sf, block_size=blk_sz, data_root=SSD_HOST_ARGS['data_root'][0])
+    dbsetup = DbSetup(indexes=indexes, clustering=clustering)
+    cgroup = CGroupConfig(cgmem_gb) if cgmem_gb is not None else None
+    
+    for seed, nworkers, branch in product(seeds, parallel_ops, branches):
+        dbbin = DbBin(branch, block_size=blk_sz, bg_size=bg_sz)
+        dbconf = DbConfig(dbbin, dbdata)
+        bbconf = BBaseConfig(nworkers=nworkers, seed=seed, workload=work)
+
+        for ns in branch_samples(branch, nsamples):
+            nv = nvictims if ns is not None and ns > 1 else None
+            if ns is not None and ns > 1:
+                ns = ns * nv
+                nv = nvictims
+            pgconf = RuntimePgConfig(shared_buffers=shmem,
+                                     pbm_evict_num_samples=ns,
+                                     pbm_evict_num_victims=nv,
+                                     synchronize_seqscans='on',
+                                     track_io_timing='on',
+                                     random_page_cost=1.1,  # default for SSD
+                                     **(extra_pg_args or {}),
+                                     **(pbm4_extra_args or {} if branch.idx_support else {}),
+                                     max_pred_locks_per_transaction=8192, 
+                                     work_mem='8MB',
+                                     )
+
+            yield ExperimentConfig(pgconf, dbconf, dbsetup, bbconf, cgroup=cgroup, db_host=SSD_HOST_ARGS['db_host'])
 
 def run_test_tpch(seeds: List[int], *,
                   nsamples: List[int], nvictims: int = 1,
@@ -483,6 +563,128 @@ def rerun_failed(done_count: int, e_str: str, exp: Iterable[ExperimentConfig], d
         run_tests(e_str, not_tried)
 
 
+def test_ycsb(): 
+    workloads = [
+        WORKLOAD_YCSB_40K_QRatio0,
+        WORKLOAD_YCSB_40K_QRatio1e5, 
+        WORKLOAD_YCSB_40K_QRatio1e4,
+        WORKLOAD_YCSB_40K_QRatio1e3,
+        WORKLOAD_YCSB_40K_QRatio1e2,
+    ]
+    
+    common_args = {
+        "nsamples": [10], 
+        "cgmem_gb": 22,  # 1.5GB seems necessary for worker memory + whatever else
+        "shmem": '16GB',
+    }
+    
+    
+    for workload in workloads: 
+        run_tests(
+            'FinalizePrelimWithCgroups60', 
+            run_test_ycsb_counts(
+                rand_seeds[6:11], 
+                **common_args,
+                work=workload,
+                parallel_ops=[32],
+                sf=40_000, 
+                cm=5,
+                branches=[BRANCH_PBM2]
+            ), 
+            mk_bbase=True,
+        )
+        
+    
+    
+
+def test_ycsb_playground(): 
+    
+    
+    PT_READ_DIST = 'ScrambledZipfian75'
+    SCAN_DIST = 'Uniform'
+    workloads = {
+        'WORKLOAD_YCSB_40K_QRatio0e6': WORKLOAD_YCSB_40K_QRatio0e6,
+        'WORKLOAD_YCSB_40K_QRatio1e6': WORKLOAD_YCSB_40K_QRatio1e6,
+        'WORKLOAD_YCSB_40K_QRatio2e6': WORKLOAD_YCSB_40K_QRatio2e6,
+        # 'WORKLOAD_YCSB_40K_QRatio3e6': WORKLOAD_YCSB_40K_QRatio3e6,
+        'WORKLOAD_YCSB_40K_QRatio4e6': WORKLOAD_YCSB_40K_QRatio4e6,
+        # 'WORKLOAD_YCSB_40K_QRatio5e6': WORKLOAD_YCSB_40K_QRatio5e6,
+        'WORKLOAD_YCSB_40K_QRatio8e6': WORKLOAD_YCSB_40K_QRatio8e6,
+        'WORKLOAD_YCSB_40K_QRatio16e6': WORKLOAD_YCSB_40K_QRatio16e6,
+    }
+    
+    common_args = {
+        "nsamples": [10], 
+        "cgmem_gb": 22,  # 1.5GB seems necessary for worker memory + whatever else
+        "shmem": '16GB',
+    }
+    
+    my_seeds = [3636, 4448, 9774, 19740]
+    
+    # so that workloads finish before seeds
+    for seed in my_seeds[1:]:
+        for workload_key, workload in workloads.items(): 
+            run_tests(
+                f'SOMEKEY_YCSB_CGROUPSV2_{workload_key}_ptread_{PT_READ_DIST}_scan_{SCAN_DIST}', 
+                run_test_ycsb_counts(
+                    [seed], 
+                    **common_args,
+                    work=workload,
+                    parallel_ops=[32],
+                    sf=40_000, 
+                    cm=3,
+                    branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3]
+                ), 
+                mk_bbase=True,
+            )
+            
+
+def test_ycsb_playground_readratio(): 
+    
+    
+    PT_READ_DIST = 'ScrambledZipfian75'
+    SCAN_DIST = 'Uniform'
+    workloads = {
+        'WORKLOAD_YCSB_40K_ReadRatio0': WORKLOAD_YCSB_40K_ReadRatio0,
+        'WORKLOAD_YCSB_40K_ReadRatio10': WORKLOAD_YCSB_40K_ReadRatio10,
+        'WORKLOAD_YCSB_40K_ReadRatio20': WORKLOAD_YCSB_40K_ReadRatio20,
+	    'WORKLOAD_YCSB_40K_ReadRatio30': WORKLOAD_YCSB_40K_ReadRatio30,
+        'WORKLOAD_YCSB_40K_ReadRatio40': WORKLOAD_YCSB_40K_ReadRatio40,
+        'WORKLOAD_YCSB_40K_ReadRatio50': WORKLOAD_YCSB_40K_ReadRatio50,
+        'WORKLOAD_YCSB_40K_ReadRatio60': WORKLOAD_YCSB_40K_ReadRatio60,
+        'WORKLOAD_YCSB_40K_ReadRatio70': WORKLOAD_YCSB_40K_ReadRatio70,
+        'WORKLOAD_YCSB_40K_ReadRatio80': WORKLOAD_YCSB_40K_ReadRatio80,
+        'WORKLOAD_YCSB_40K_ReadRatio90': WORKLOAD_YCSB_40K_ReadRatio90,
+        'WORKLOAD_YCSB_40K_ReadRatio100': WORKLOAD_YCSB_40K_ReadRatio100,
+    }
+    
+    common_args = {
+        "nsamples": [10], 
+        # "cgmem_gb": 22,  # 1.5GB seems necessary for worker memory + whatever else
+        "cgmem_gb": 22,
+        "shmem": '16GB',
+    }
+    
+    my_seeds = [3636, 4448, 9774, 19740]
+    
+    # so that workloads finish before seeds
+    for seed in my_seeds:
+        for workload_key, workload in workloads.items(): 
+            run_tests(
+                f'READNEWRATIO_YCSB_DISABLED_{workload_key}_ptread_{PT_READ_DIST}_scan_{SCAN_DIST}', 
+                run_test_ycsb_counts(
+                    [seed], 
+                    **common_args,
+                    work=workload,
+                    parallel_ops=[32],
+                    sf=40_000, 
+                    cm=1,
+                    branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3]
+                ), 
+                mk_bbase=True,
+            )
+        
+
 def test_tpch(randomize=True):
     common_args = {
         # **SSD_HOST_ARGS,
@@ -636,10 +838,17 @@ def test_micro_seq_shmem():
         'mems': [
             # ('12GB', 17), 
             # ('20GB', 25), 
-            ('8GB', 9.6), 
+            # ('8GB', 9.6), 
             # ('24GB', 30)
             # ('256MB', 0.75), ('512MB', 1.0), ('1GB', 1.5), ('2GB', 2.5), ('3GB', 3.5), ('4GB', 4.5),
             # ('5GB', 5.6), ('6GB', 6.6), ('7GB', 7.6), ('8GB', 8.6),  # slightly extra sysem memory for these -- som
+            
+            # ('28GB', 32), 
+            # ('32GB', 38), 
+            # ('36GB', 44), 
+            # ('40GB', 48), 
+            # ('44GB', 52)
+            
         ],
 
         # 'mems': [('256MB', 0.75), ('512MB', 1.0), ('1GB', 1.5), ('2GB', 2.5), ('4GB', 4.5), ('8GB', 8.6)],  # 8GB needs slightly extra for PBM branches, due to frequency 
@@ -647,8 +856,17 @@ def test_micro_seq_shmem():
     }
 
     # compare branches
-    run_tests('shmem_micro_seqs_1', gen_micro_shmem(rand_seeds[7:8], **common_args, nsamples=[10], branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], sf=50), dry_run=False)
+    # run_tests('shmem_micro_seqs_1', gen_micro_shmem(rand_seeds[7:11], **common_args, nsamples=[10], branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], sf=50), dry_run=False)
 
+    # Missing ones for better CIs 
+    mems = [
+        ('12GB', 17), 
+        ('20GB', 25),
+        ('24GB', 30)
+    ]
+    seeds = [3636, 4448, 9774, 19740]
+    common_args['mems'] = mems
+    run_tests('shmem_micro_seqs_1', gen_micro_shmem(seeds, **common_args, nsamples=[10], branches=[BRANCH_PBM2, BRANCH_PBM3, BRANCH_PBM1, BRANCH_POSTGRES_BASE], ),)
 
     # compare different # of samples
     # run_tests('shmem_micro_seqs_1', gen_micro_shmem(rand_seeds[7:12], **common_args, nsamples=[5, 20, 100], branches=[BRANCH_PBM2, ], ),)
@@ -674,6 +892,18 @@ def test_micro_seqscans(ssd=True):
         # run_tests('VARIABLE_TIME',
         #           test_micro_parallelism(rand_seeds[7:12], **common_args, **SSD_HOST_ARGS, nsamples=[10],
         #                                  branches=[BRANCH_PBM3][::-1], sf=50))  # , BRANCH_PBM4
+        
+        
+        # Missing ones 
+        
+        common_args['parallel_ops'] = [16]
+        my_seeds = [3636]
+        common_args['cm'] = 4
+        run_tests('TESTINGGGGGGGGGGGG', test_micro_parallelism(my_seeds, **common_args, **SSD_HOST_ARGS, nsamples=[10], sf=50, branches=[BRANCH_PBM3]))
+        
+        # common_args['parallel_ops'] = [64]
+        # run_tests('VARIABLE_TIME', test_micro_parallelism([3636, 9774, 19740], **common_args, **SSD_HOST_ARGS, nsamples=[10], sf=50, branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1]))
+        
 
         # # Try PBM-sampling with different #s of samples
         
@@ -681,14 +911,14 @@ def test_micro_seqscans(ssd=True):
         #           test_micro_parallelism(rand_seeds[7:11], **common_args, **SSD_HOST_ARGS, nsamples=[100],
         #                                  branches=[BRANCH_PBM2, ], sf=50))  # BRANCH_PBM3, BRANCH_PBM4
         
-        # Redo PBM 1 with 32 threads 
-        run_tests('parallelism_micro_seqscans_1',
-                  test_micro_parallelism(rand_seeds[7:11], **common_args, **SSD_HOST_ARGS, nsamples=[1],
-                                         branches=[BRANCH_PBM2, ], sf=50))  # BRANCH_PBM3, BRANCH_PBM4
+        # # Redo PBM 1 with 32 threads 
+        # run_tests('parallelism_micro_seqscans_1',
+        #           test_micro_parallelism(rand_seeds[7:11], **common_args, **SSD_HOST_ARGS, nsamples=[1],
+        #                                  branches=[BRANCH_PBM2, ], sf=50))  # BRANCH_PBM3, BRANCH_PBM4
 
         # # Try PBM-sampling with multi-eviction
-        # run_tests('multi_eviction',
-        #           test_micro_parallelism(rand_seeds[7:11], **common_args, **SSD_HOST_ARGS, nsamples=[10],  nvictims=10,
+        # run_tests('VARIABLE_TIME_CGROUPS2_MULTI_EVICTION',
+        #           test_micro_parallelism(my_seeds, **common_args, **SSD_HOST_ARGS, nsamples=[10],  nvictims=10,
         #                                  branches=[BRANCH_PBM2, ], sf=50))  # BRANCH_PBM3, BRANCH_PBM4
     else:  # HDD tests
         pass
@@ -708,20 +938,27 @@ def test_micro_trailing_idx():
     """Experiment: lineitem microbenchmarks with un-correlated index scans, to test "trailing index scan" support."""
     common_args = {
         **SSD_HOST_ARGS,
-        'parallel_ops': [16, 32], 'cache_time': 10, 'cgmem_gb': 22.0,
+        'parallel_ops': [8, 16, 32, 64], 'cache_time': 10, 'cgmem_gb': 22.0,
         'selectivity': 0.01, 'pct_of_range': 5, 'cm': 6, 'shmem': '16384MB', 'blk_sz': 8, 'bg_sz': 1024,
         # 'indexes': 'btree', 'clustering': 'dates',
     }
 
     # for non-PBM4 as reference
-    # run_tests('micro_idx_parallelism_baseline_1',
-    #           test_micro_index_parallelism(rand_seeds[7:11], **common_args, nsamples=[ 10, 20],
+    seeds = [3636, 4448, 9774, 19740]
+    # run_tests('TRAILING_CGROUPSV2',
+    #           test_micro_index_parallelism(seeds, **common_args, nsamples=[10],
     #                                        branches=[BRANCH_POSTGRES_BASE, BRANCH_PBM1, BRANCH_PBM2, BRANCH_PBM3], sf=50),)
     
+    run_tests('TRAILING_CGROUPSV2',
+              test_micro_index_parallelism(seeds, **common_args, nsamples=[10], branches=[BRANCH_PBM4],
+                                           pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True, 'pbm_idx_scan_num_counts': 0,},sf=50),)
+
+
+
     # clock sweep only 
-    run_tests('micro_idx_parallelism_baseline_1',
-              test_micro_index_parallelism(rand_seeds[7:11], **common_args, nsamples=[10],
-                                           branches=[BRANCH_POSTGRES_BASE], sf=50),)
+    # run_tests('micro_idx_parallelism_baseline_1',
+    #           test_micro_index_parallelism(rand_seeds[7:11], **common_args, nsamples=[10],
+    #                                        branches=[BRANCH_POSTGRES_BASE], sf=50),)
     
     # to generate indexes with big ram
     # common_args['cgmem_gb'] = 160.0
@@ -822,10 +1059,10 @@ def test_micro_seq_index_scans():
     #                                  pbm4_extra_args={'pbm_evict_use_freq': False, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True,}))
     # run_tests('parallelism_ssd_btree_pbm4_3_freq+lru_nr',
     #           test_micro_parallelism(seeds, **common_args, **standard_args, branches=[BRANCH_PBM4,],
-    #                                  pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True,}))
-    run_tests('SEQ_IDX_SCANS_PBM4_ALL',
-              test_micro_parallelism(seeds, **common_args, **standard_args, branches=[BRANCH_PBM4,], sf=50,
-                                     pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True,}))
+    # #                                  pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': False, 'pbm_lru_if_not_requested': True,}))
+    # run_tests('SEQ_IDX_SCANS_PBM4_ALL',
+    #           test_micro_parallelism(seeds, **common_args, **standard_args, branches=[BRANCH_PBM4,], sf=50,
+    #                                  pbm4_extra_args={'pbm_evict_use_freq': True, 'pbm_evict_use_idx_scan': True, 'pbm_lru_if_not_requested': True,}))
 
     # # try again without parallel scans, maybe that is screwing things up... nope! still doesn't help :(
     # run_tests('parallelism_ssd_btree_pbm4_2_noparallel',
@@ -840,6 +1077,9 @@ def test_micro_seq_index_scans():
     # run_tests('parallelism_ssd_btree_pbm4_2_try_lru_w/o_idx',
     #           test_micro_parallelism(rand_seeds[3:3], **common_args, branches=[BRANCH_PBM4,], parallel_ops=[24], nsamples=[10],
     #                                  extra_pg_args={'pbm_lru_if_not_requested': True, 'pbm_evict_use_idx_scan': False}))
+    
+    
+    
 
 
 
@@ -1016,7 +1256,10 @@ if __name__ == '__main__':
         "tpch": test_tpch,
         "tpch_brinonly": test_tpch_brinonly,
         "tpch_sameorder": lambda: test_tpch(randomize=False),
-	    "small_tpch": lambda: test_small_tpch(int(sys.argv[2])) # to create the indexes. Only run once after generating the data. 
+	    "small_tpch": lambda: test_small_tpch(int(sys.argv[2])), # to create the indexes. Only run once after generating the data. 
+        "ycsb": lambda: test_ycsb(),
+        "ycsb_playground": lambda: test_ycsb_playground(),
+        "ycsb_playground_readratio": lambda: test_ycsb_playground_readratio(),
     }
 
     if len(sys.argv) <= 1:

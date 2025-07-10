@@ -32,13 +32,16 @@ def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument('action', choices=[
         'pg_setup',
+        'pg_setup_pbmfreq',
         'pg_update',
         'pg_clean',
         'pg_clean+base',
         'bbase_setup',
+        'mk_bbase_setup',
         'bbase_reinstall',
         'gen_data_tpch',
         'gen_data_tpcc',
+        'gen_data_ycsb',
         'drop_indexes',
         'reindex',
         'bench',
@@ -79,6 +82,9 @@ def main():
 
     if args.action == 'pg_setup':
         one_time_pg_setup()
+        
+    elif args.action == 'pg_setup_pbmfreq':
+        one_time_pg_setup_pbmfreq()
 
     elif args.action == 'pg_update':
         refresh_pg_installs()
@@ -91,6 +97,9 @@ def main():
 
     elif args.action == 'bbase_setup':
         one_time_benchbase_setup()
+        
+    elif args.action == 'mk_bbase_setup':
+        one_time_benchbase_setup(mk_benchbase=True)
 
     elif args.action == 'bbase_reinstall':
         install_benchbase()
@@ -100,6 +109,9 @@ def main():
 
     elif args.action == 'gen_data_tpcc':
         gen_data_tpcc(args.sf, blk_sz=args.blk_sz)
+        
+    elif args.action == "gen_data_ycsb": 
+        gen_data_ycsb(args.sf, blk_sz=args.blk_sz, data_root=args.data_root)
 
     elif args.action == 'drop_indexes':
         drop_all_indexes_tpch(args.sf, blk_sz=args.blk_sz, db_host=args.host)

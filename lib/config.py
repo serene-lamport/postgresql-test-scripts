@@ -19,6 +19,7 @@ import os
 # Postgres connection information
 PG_HOST_TPCH: str = 'nasus'
 PG_HOST_TPCC: str = 'nasus'
+PG_HOST_YCSB: str = 'nasus'
 PG_PORT: str = '5432'
 PG_USER: str = os.environ['USER']
 PG_PASSWD: str = ''
@@ -112,8 +113,13 @@ BENCHBASE_GIT_URL = 'uw_gitlab:ta3vande/benchbase.git'
 BENCHBASE_SRC_PATH = BUILD_ROOT / 'benchbase_src'
 BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'benchbase_install'
 
+# MK Benchbase (Java-23)
+MK_BENCHBASE_SRC_PATH = BUILD_ROOT / '..' / 'mk-benchbase'
+MK_BENCHBASE_INSTALL_PATH = BUILD_ROOT / 'mk_benchbase_install'
+
 # Results
 RESULTS_ROOT = BUILD_ROOT / 'results'
+RESULTS_ROOT = Path('/var/mkhalaji/pgresults')  # TODO: change this to a different path
 FIGURES_ROOT = BUILD_ROOT / 'figures'
 CONFIG_FILE_NAME = 'test_config.json'
 CONSTRAINTS_FILE = 'constraints.csv'

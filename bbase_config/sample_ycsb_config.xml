@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<parameters>
+
+    <!-- Connection details -->
+    <type>POSTGRES</type>
+    <driver>org.postgresql.Driver</driver>
+    <url>jdbc:postgresql://localhost:5432/postgres?sslmode=disable&amp;ApplicationName=ssb&amp;reWriteBatchedInserts=true</url>
+    <username>admin</username>
+    <password>password</password>
+    <reconnectOnConnectionFailure>true</reconnectOnConnectionFailure>
+    <isolation>TRANSACTION_REPEATABLE_READ</isolation>
+    <batchsize>1024</batchsize>
+    <randomSeed>12345</randomSeed>
+
+    <!-- Scalefactor in YCSB is *1000 the number of rows in the USERTABLE-->
+    <scalefactor>1000</scalefactor>
+    
+    <!-- Optional: Override the field size for each column in USERTABLE -->
+    <!-- <fieldSize>8</fieldSize> -->
+
+    <!-- Optional: Override the zipfian constant to modify the skew -->
+    <skewFactor>0.75</skewFactor>
+
+    <!-- The workload -->
+    <terminals>8</terminals>
+    <works>
+        <work>
+            <time>60</time>
+            <rate>unlimited</rate>
+            <weights>50,0,0,0,0,0,50</weights>
+        </work>
+    </works>
+
+    <!-- YCSB Procedures declaration -->
+    <transactiontypes>
+        <transactiontype>
+            <name>ReadRecord</name>
+        </transactiontype>
+        <transactiontype>
+            <name>InsertRecord</name>
+        </transactiontype>
+        <transactiontype>
+            <name>ScanRecord</name>
+        </transactiontype>
+        <transactiontype>
+            <name>UpdateRecord</name>
+        </transactiontype>
+        <transactiontype>
+            <name>DeleteRecord</name>
+        </transactiontype>
+        <transactiontype>
+            <name>ReadModifyWriteRecord</name>
+        </transactiontype>
+        <transactiontype>
+            <name>SeqScanRecord</name>
+        </transactiontype>
+    </transactiontypes>
+</parameters>
